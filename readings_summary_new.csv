@@ -1,0 +1,7 @@
+,acid_unit_h.TXT
+COMMOM:,"[' ALLOF4, CIPCOM']"
+H:,"['acid_unit.h', 'constants.h', 'skel_upf.h', 'ACID_UPF.H', 'ACID_EPN.H', 'allof4_epn.h', 'allof4_upf.h']"
+INC:,[]
+PROGRAM NAME:,[' D3APPDEV:[D3APP.PCM4.SABL]ACIDSC.SEQ']
+RUNIT:,[]
+UNIT:,[' ACID']

@@ -1,0 +1,2141 @@
+; check prox and handvalves are valid
+;******************************************************************************
+;*								    
+;*									  
+;*	PROGRAM NAME:	D3APP:[SETUP.SPECIFIC.PCM4.SABL]FCMCIP.SEQ
+;*									                                                  
+;*									                                                   
+;*	PROJECT NAME:	MILLER BREWING, TRENTON, OH
+;*	PROJECT NUM :
+;*	PCM NUMBER  :	PCM4
+;*	WRITTEN BY  :
+;*	DATE	      :	NOVEMBER 9, 2005
+;*									                                                   
+;******************************************************************************
+;
+;	MODIFICATION LOG
+;
+;	DATE		         PATCH ID	      DESCRIPTION
+;	----		         --------	      -----------
+;	21oct2006		rma000			fix holdsub failsub stackclr stuff
+;	21oct2006		rma001			close diluent valve in hold and fail
+;	16-JUL-2012		VCM001			Skip prerinse
+;	20-OCT-2015		JMS004			Removed Eductor valves and flow switch
+;	19-APR-16		JMS001			Added half rinse time when pos. pheno. check
+;	19-APR-16		VCM02			Only reclaim final rinse to prerinse tank
+;	23-Aug-17		VCM003			Added CIPCOM CAUSTIC_901_RECLAIM_FG not sure
+;							what CAUSTIC_901_RECLAIM_FG_ALLOF4 is used for
+;	21-mar-2018		ldk000			Update global CIP step number
+;	10-SEP-2018		JMS002			Added fail step to CHLO2 pump not running 
+;	01-Sep-2019		jaz001			Update Fass Cooler valves for single Pass
+;	23-oct-2019		jaz002			Updates for Single pass
+;*******************************************************************************
+;
+;       PROGRAM FUNCTION:       This program performs the sequence
+;       ----------------        administration for the fass cooler CIP system
+;
+;*******************************************************************************
+;
+;       DEFINE UNITS
+;       ------------
+   UNIT PRIM1
+   COMMON CFGCM,ALLOF4,CIP90COM,CIP901,ALLOF8,ALLOF6
+   RUNIT PRIM2
+
+#include <fcool_unit.h>		   /* Unit, variable & epn definitions */
+
+;*******************************************************************************
+;
+;               SET ERROR SUBROUTINES
+;
+;*******************************************************************************
+
+   ON ERROR GOSUB ERRSUB           ;define error handling routine
+   ON HOLD GOSUB HOLDSUB           ;define hold routine
+
+;*******************************************************************************
+;*******************************************************************************
+;               M A I N
+;*******************************************************************************
+;*******************************************************************************
+MAIN:
+	IF (SA_STATE > 2) THEN		   ;If pcm (or program) was reloaded while 
+		GOTO HOLDSUB			         ;in a running state (not sytem off)
+       						            ;Must restart from hold
+
+CONTRETURN:
+   ON SA_STATE GOTO ST1,ST2,ST3,ST4,ST5,ST6,ST7,ST8,ST9,ST10
+
+   IF (SA_STATE != 0) THEN                     ;If sa state not zero
+      BEGIN
+      FAIL_MSG = "ILLEGAL STATE NUMBER"
+      GOTO FAIL
+      END
+
+   GOSUB SAINIT                                    ;Initialize program
+
+	GOTO ST2			; Jump to SETUP for normal process
+
+;===============================================================================
+;               SYSTEM OFF
+;===============================================================================
+ST1:
+
+   SA_STATE = 1                             ;Set sa state
+   GOSUB STATEINIT                              ;Initialize state
+	GOSUB RUNCMDDEV			               		;Run command devices                           
+
+   GOSUB CSSSUPPLYRELEASE                       ;CSS Supply Valve 8400XV107
+
+   IF (COMPAR(CIP_901_VESSEL_CLND,UNIT_SG,STRLEN(UNIT_SG),EQ)) THEN
+      CIP_901_VESSEL_CLND = ""
+   LAMP LAMP_ADI, LAMP_NUMBER,BLACK
+   ESTOP_CIP_FG = 0
+   OPER_RESPONSE = ""   
+   ;reset default values
+   PRERINSE_STIME = 300
+   CAUSTIC_STIME = 1200
+   FIRST_RINSE_STIME = 600
+   CHLOR_RINSE_STIME = 480
+   FINAL_RINSE_STIME = 600
+   DEBREW_STIME = 600                                       
+	EXIT
+
+;===============================================================================
+;                SETUP CHECK
+;===============================================================================
+ST2:
+
+	SA_STATE = 2										   ;Set sa state
+	GOSUB STATEINIT										;Initialize state
+   GOSUB CSSSUPPLYRESERVE                       ;Reserve CSS Supply Valve 8400XV107
+   GOSUB CHKMAN                                 ;Check if CIP devices are in manual
+   GOSUB CHKCIPSTATUS                           ;Check CIP status
+   GOSUB CHKCIPINUSE                            ;Check if CIP in use
+	GOSUB RUNCMDDEV										;Run command devices 						
+
+   CIP_901_VESSEL_CLND = UNIT_SG         ;CIP vessel to be cleaned
+ 	CL2_PPM = 0
+   PHENO_CHECK_P_FG = 0                  ;JMS001
+
+ST2SS:
+   ;-------------------------------------
+   ;       steady state conditions
+   ;-------------------------------------
+   GOSUB PROXHNDVLVCHK                          ;Check prox switches & handvalves
+
+   IF (!FC_EX1_FG) THEN
+      BEGIN
+      SA_4_MESSAGE = "VERIFY CIP CONNECTIONS"
+      SA_5_MESSAGE = "ACK TO CONFIRM"
+      FC_EX1_FG = 1
+      END
+
+   ;Operator msg acknowledge command
+	IF (MSG_ACK_CMD) THEN		
+      BEGIN
+		SA_4_MESSAGE = "" 
+		SA_5_MESSAGE = "" 
+      MSG_ACK_CMD = 0
+      END
+   ;----------------------------------
+   ;       transition conditions
+   ;----------------------------------
+	IF ((STRLEN(SA_MESSAGE) < 2) & STRLEN(SA_4_MESSAGE) < 2) THEN
+;VCM001      GOTO ST3			                              ;Prerinse
+      GOTO ST4			                              ;caustic VCM001
+
+   WAIT 1
+   GOTO ST2SS
+
+;===============================================================================
+;               PRERINSE
+;===============================================================================
+ST3:
+
+	SA_STATE = 3										   ;Set sa state
+	GOSUB STATEINIT										;Initialize state
+   GOSUB CSSSUPPLYRESERVE                       ;Reserve CSS Supply Valve 8400XV107
+   GOSUB PROXHNDVLVCHK                          ;Check prox switches & handvalves
+   GOSUB CHKCIPSTATUS                           ;Check CIP status
+   GOSUB CHKCIPINUSE                            ;Check if CIP in use
+	GOSUB RUNCMDDEV										;Run command devices 						
+
+ST3SS:
+   ;-------------------------------------
+   ;       steady state conditions
+   ;-------------------------------------
+	GOSUB CONTCHK                    				;Continuous Checks
+   GOSUB CYCLESEATLIFT                          ;Cycle seat lifters
+   GOSUB CHKCSSFLOW                             ;Check CSS Flow
+   GOSUB PROXHNDVLVCHK                          ;Check prox switches & handvalves
+   GOSUB CHKCONDUCT                          ;Check continuity of CSR line before starting timer   ;ldk000
+
+   ;post message to operator
+   IF (STEP_TMR > 0) THEN
+      BEGIN 
+      TEMP_FL =  PRERINSE_STIME - STEP_TMR 
+      TEMP_INT = FLTCNV(TEMP_SG,TEMP_FL,4,0)
+      TEMP_INT = APPEND(SA_2_MESSAGE,"TIME LEFT = ",TEMP_SG," SEC")
+      END
+   ;----------------------------------
+   ;       transition conditions
+   ;----------------------------------
+   IF (STEP_TMR >= PRERINSE_STIME) THEN   
+      GOTO ST4                                   ;Caustic Rinse
+
+   WAIT 1
+   GOTO ST3SS
+
+
+;===============================================================================
+;               CAUSTIC CLEAN
+;===============================================================================
+ST4:
+
+	SA_STATE = 4										   ;Set sa state
+	GOSUB STATEINIT										;Initialize state
+   GOSUB CSSSUPPLYRESERVE                       ;Reserve CSS Supply Valve 8400XV107
+   GOSUB PROXHNDVLVCHK                          ;Check prox switches & handvalves
+   GOSUB CHKCIPSTATUS                           ;Check CIP status
+   GOSUB CHKCIPINUSE                            ;Check if CIP in use
+	GOSUB RUNCMDDEV										;Run command devices 						
+	
+ST4SS:
+   ;-------------------------------------
+   ;       steady state conditions
+   ;-------------------------------------
+	GOSUB CONTCHK                    				;Continuous Checks
+   GOSUB CYCLESEATLIFT                          ;Cycle seat lifters
+   GOSUB PROXHNDVLVCHK                          ;Check prox switches & handvalves
+   GOSUB CHKCONDUCT                          ;Check continuity of CSR line before starting timer   ;ldk000
+
+   ;post message to operator
+   IF (STEP_TMR > 0) THEN
+      BEGIN 
+      TEMP_FL =  CAUSTIC_STIME - STEP_TMR 
+      TEMP_INT = FLTCNV(TEMP_SG,TEMP_FL,4,0)
+      TEMP_INT = APPEND(SA_2_MESSAGE,"TIME LEFT = ",TEMP_SG," SEC")
+      END
+
+   IF (STEP_TMR > (CAUSTIC_STIME * .3)) THEN 
+		BEGIN
+      CAUSTIC_901_RECLAIM_FG_ALLOF4 = 1                   ;CIP90 flag
+		CAUSTIC_901_RECLAIM_FG = 1  ;cipcom vcm003
+		END
+   ;----------------------------------
+   ;       transition conditions
+   ;----------------------------------
+   IF (STEP_TMR >= CAUSTIC_STIME) THEN
+      GOTO ST5                                     ;First Rinse
+
+   WAIT 1
+   GOTO ST4SS
+
+
+;===============================================================================
+;               FIRST RINSE
+;===============================================================================
+ST5:
+
+	SA_STATE = 5										   ;Set sa state
+	GOSUB STATEINIT										;Initialize state
+   GOSUB CSSSUPPLYRESERVE                       ;Reserve CSS Supply Valve 8400XV107
+   GOSUB PROXHNDVLVCHK                          ;Check prox switches & handvalves
+   GOSUB CHKCIPSTATUS                           ;Check CIP status
+   GOSUB CHKCIPINUSE                            ;Check if CIP in use
+	GOSUB RUNCMDDEV										;Run command devices 						
+
+ST5SS:
+   ;-------------------------------------
+   ;       steady state conditions
+   ;-------------------------------------
+	GOSUB CONTCHK                    				;Continuous Checks
+   GOSUB CYCLESEATLIFT                          ;Cycle seat lifters
+   GOSUB CHKCSSFLOW                             ;Check CSS Flow
+   GOSUB PROXHNDVLVCHK                          ;Check prox switches & handvalves
+   GOSUB CHKCONDUCT                          ;Check continuity of CSR line before starting timer
+
+   ;post message to operator
+   IF (STEP_TMR > 0) THEN
+      BEGIN 
+      TEMP_FL =  FIRST_RINSE_STIME - STEP_TMR 
+      TEMP_INT = FLTCNV(TEMP_SG,TEMP_FL,4,0)
+      TEMP_INT = APPEND(SA_2_MESSAGE,"TIME LEFT = ",TEMP_SG," SEC")
+      END
+
+   IF (STEP_TMR > (FIRST_RINSE_STIME * .2)) THEN 
+		BEGIN
+      CAUSTIC_901_RECLAIM_FG_ALLOF4 = 0                   ;CIP90 flag
+		CAUSTIC_901_RECLAIM_FG = 0  ;cipcom vcm003
+		END
+
+   ;----------------------------------
+   ;       transition conditions
+   ;----------------------------------
+   IF (STEP_TMR >= FIRST_RINSE_STIME) THEN
+      GOTO ST6                                   ;Chlorine rinse
+
+   WAIT 1
+   GOTO ST5SS
+
+
+;===============================================================================
+;               CHLORINE RINSE
+;===============================================================================
+ST6:
+
+	SA_STATE = 6										   ;Set sa state
+	GOSUB STATEINIT										;Initialize state
+   GOSUB CSSSUPPLYRESERVE                       ;Reserve CSS Supply Valve 8400XV107
+   GOSUB PROXHNDVLVCHK                          ;Check prox switches & handvalves
+   GOSUB CHKCIPSTATUS                           ;Check CIP status
+   GOSUB CHKCIPINUSE                            ;Check if CIP in use
+	GOSUB RUNCMDDEV										;Run command devices 						
+	
+   TIMERCLR STEP_TMR                             ;Start timer   ;JMS002
+   TIMERON STEP_TMR                             ;Start timer
+
+		CIP901_PRERINSE_RECLAIM_FG = 1    ;VCM002
+
+ST6SS:
+   ;-------------------------------------
+   ;       steady state conditions
+   ;-------------------------------------
+	GOSUB CONTCHK                    				;Continuous Checks
+   GOSUB CYCLESEATLIFT                          ;Cycle seat lifters
+   GOSUB CHKCSSFLOW                             ;Check CSS Flow
+   GOSUB PROXHNDVLVCHK                          ;Check prox switches & handvalves
+
+   ;post message to operator
+   TEMP_FL =  CHLOR_RINSE_STIME - STEP_TMR 
+   TEMP_INT = FLTCNV(TEMP_SG,TEMP_FL,4,0)
+   TEMP_INT = APPEND(SA_2_MESSAGE,"TIME LEFT = ",TEMP_SG," SEC")
+
+   IF ((STEP_TMR >= CHLORINE_CHK_DELAY_STIME) & (CL2_PPM = 0)) THEN
+      BEGIN
+      SA_4_MESSAGE = "CHECK CHLORINE"
+      LAMP LAMP_ADI, LAMP_NUMBER, YELLOW      ;SKID = YELLOW
+      END
+   ELSE
+      LAMP LAMP_ADI, LAMP_NUMBER, GREEN      ;SKID = GREEN
+
+;JMS002 START
+	  IF ('CLO2DOT0001':DOT_VAL = 1)&('CLO2IN0001':DIN_VAL = 0)&(STEP_TMR >= 180) THEN
+	   BEGIN
+           FAIL_MSG = "CLO2 PUMP NOT RUNNING"
+           GOTO FAIL
+           END
+;JMS002 END
+
+   ;----------------------------------
+   ;       transition conditions
+   ;----------------------------------
+   IF (STEP_TMR >= CHLOR_RINSE_STIME) THEN
+      GOTO ST7                               ;Final rinse
+
+   WAIT 1
+   GOTO ST6SS
+
+
+;===============================================================================
+;               FINAL RINSE
+;===============================================================================
+ST7:
+
+	SA_STATE = 7										   ;Set sa state
+	GOSUB STATEINIT										;Initialize state
+   GOSUB CSSSUPPLYRESERVE                       ;Reserve CSS Supply Valve 8400XV107
+   GOSUB PROXHNDVLVCHK                          ;Check prox switches & handvalves
+   GOSUB CHKCIPSTATUS                           ;Check CIP status
+   GOSUB CHKCIPINUSE                            ;Check if CIP in use
+	GOSUB RUNCMDDEV										;Run command devices 						
+	
+   TIMERON STEP_TMR                             ;Start timer
+
+		CIP901_PRERINSE_RECLAIM_FG = 1    ;VCM002
+
+ST7SS:
+   ;-------------------------------------
+   ;       steady state conditions
+   ;-------------------------------------
+	GOSUB CONTCHK                    				;Continuous Checks
+   GOSUB CYCLESEATLIFT                          ;Cycle seat lifters
+   GOSUB CHKCSSFLOW                             ;Check CSS Flow
+   GOSUB PROXHNDVLVCHK                          ;Check prox switches & handvalves
+
+   ;post message to operator
+   TEMP_FL =  FINAL_RINSE_STIME - STEP_TMR 
+   TEMP_INT = FLTCNV(TEMP_SG,TEMP_FL,4,0)
+   TEMP_INT = APPEND(SA_2_MESSAGE,"TIME LEFT = ",TEMP_SG," SEC")
+   ;----------------------------------
+   ;       transition conditions
+   ;----------------------------------
+   IF (STEP_TMR >= FINAL_RINSE_STIME) THEN
+      BEGIN
+      OPER_RESPONSE = ""
+      GOTO ST8                                   ;Pheno Check
+      END
+
+;JMS001 BEGIN
+   IF (PHENO_CHECK_P_FG = 1) THEN
+      BEGIN
+      IF (STEP_TMR >= FINAL_RINSE_STIME / 2 ) THEN
+      BEGIN
+      OPER_RESPONSE = ""
+      GOTO ST8                                   ;Pheno Check
+      END
+	 END
+;JMS001 END
+
+   WAIT 1
+   GOTO ST7SS
+
+
+;===============================================================================
+;               PHENO CHECK
+;===============================================================================
+ST8:
+
+	SA_STATE = 8										   ;Set sa state
+	GOSUB STATEINIT										;Initialize state
+	GOSUB RUNCMDDEV										;Run command devices 						
+	
+ST8SS:
+   ;-------------------------------------
+   ;       steady state conditions
+   ;-------------------------------------
+	IF (!INSTR(OPER_RESPONSE,"P") & !INSTR(OPER_RESPONSE,"N")) THEN
+      BEGIN      
+		SA_4_MESSAGE = "PERFORM PHENO CHECK, ENTER" 
+		SA_5_MESSAGE = "RESULT & ACK TO CONTINUE"
+      LAMP LAMP_ADI, LAMP_NUMBER, YELLOW      ;SKID = YELLOW
+      END
+   
+   ;Operator msg acknowledge command
+	IF (MSG_ACK_CMD) THEN		
+      BEGIN
+		SA_4_MESSAGE = "" 
+		SA_5_MESSAGE = "" 
+      MSG_ACK_CMD = 0
+      END
+   ;----------------------------------
+   ;       transition conditions
+   ;----------------------------------
+   IF (STRLEN(SA_4_MESSAGE) < 2) THEN
+      BEGIN
+      MSG_ACK_CMD = 0
+      IF (INSTR(OPER_RESPONSE,"N")) THEN
+         BEGIN                                     
+         PHENO_CHECK_P_FG = 0                            ;JMS001
+;         CIP_901_PHENO_RESULT = OPER_RESPONSE
+;         CIP_901_CL2_PPM = CL2_PPM
+;         CIP_REQ_PTR = CIP_RELEASE
+		   GOTO ST10								         ;Debrew Setup
+         END
+	   IF (INSTR(OPER_RESPONSE,"P")) THEN
+         BEGIN
+         PHENO_CHECK_P_FG = 1                            ;JMS001
+         GOTO ST7                    			      ;Repeat the Final Rinse
+         END
+	   END
+   WAIT 1
+   GOTO ST8SS
+
+
+;===============================================================================
+;                DEBREW SETUP CHECK
+;===============================================================================
+ST9:
+
+	SA_STATE = 9										;Set sa state
+	GOSUB STATEINIT										;Initialize state
+	GOSUB RUNCMDDEV										;Run command devices 
+   GOSUB CSSSUPPLYRELEASE                       ;CSS Supply Valve 8400XV107
+   IF (COMPAR(CIP_901_VESSEL_CLND,UNIT_SG,STRLEN(UNIT_SG),EQ)) THEN
+      CIP_901_VESSEL_CLND = ""
+
+ST9SS:
+   ;-------------------------------------
+   ;       steady state conditions
+   ;-------------------------------------
+	IF (!INSTR(OPER_RESPONSE,"P") & !INSTR(OPER_RESPONSE,"N")) THEN
+      BEGIN
+      SA_4_MESSAGE = "DEBREW OUT? ENTER YES OR NO"
+      SA_5_MESSAGE = "REMOVE CSR & ACK TO CONTINUE"
+      LAMP LAMP_ADI, LAMP_NUMBER, YELLOW      ;SKID = YELLOW
+      END
+   ;Operator msg acknowledge command
+	IF (MSG_ACK_CMD) THEN		
+      BEGIN
+		SA_4_MESSAGE = "" 
+		SA_5_MESSAGE = "" 
+      MSG_ACK_CMD = 0
+      END
+   ;----------------------------------
+   ;       transition conditions
+   ;----------------------------------
+   IF (STRLEN(SA_4_MESSAGE) < 2) THEN
+      BEGIN 
+      MSG_ACK_CMD = 0
+      IF (INSTR(OPER_RESPONSE,"N")) THEN
+         GOTO ST1			                        ;System Off
+      IF (INSTR(OPER_RESPONSE,"Y")) THEN
+         BEGIN
+         OPER_RESPONSE = ""
+         GOTO ST10                              ;Debrew Setup Check
+         END
+      END
+
+   WAIT 1
+   GOTO ST9SS
+
+;===============================================================================
+;                DEBREW OUT
+;===============================================================================
+ST10:
+
+	SA_STATE = 10										   ;Set sa state
+	GOSUB STATEINIT										;Initialize state
+;   GOSUB DEBREWPROXCHK
+	GOSUB RUNCMDDEV										;Run command devices 	
+   GOSUB CSSSUPPLYRELEASE                       ;CSS Supply Valve 8400XV107
+
+   TIMERON STEP_TMR                             ;Start timer
+
+ST10SS:
+   ;-------------------------------------
+   ;       steady state conditions
+   ;-------------------------------------
+   ;post message to operator
+   TEMP_FL =  DEBREW_STIME - STEP_TMR 
+   TEMP_INT = FLTCNV(TEMP_SG,TEMP_FL,4,0)
+   TEMP_INT = APPEND(SA_2_MESSAGE,"TIME LEFT = ",TEMP_SG," SEC")
+   ;----------------------------------
+   ;       transition conditions
+   ;----------------------------------
+   IF (STEP_TMR > DEBREW_STIME) THEN
+      BEGIN
+      CIP_901_PHENO_RESULT = OPER_RESPONSE
+      CIP_901_CL2_PPM = CL2_PPM
+      CIP_REQ_PTR = CIP_RELEASE
+      GOTO ST1			                        ;System Off
+      END
+
+   WAIT 1
+   GOTO ST10SS
+
+;===============================================================================
+;               FAIL
+;===============================================================================
+FAIL:
+
+   SEQ_STATUS = "FAIL"
+	STACKCLR 	;rma000
+   TIMEROFF STEP_TMR                             ;stop timer
+   TIMEROFF CIP_CSR_STMR  
+
+;rma000    ON ERROR GOSUB ERRSTK2
+;rma000    FOR STK_CNT = 1 TO 10 STEP 1
+;rma000       RETCLR
+;rma000    NEXT STK_CNT
+;rma000    GOTO ENDSTK2
+;rma000 ERRSTK2:
+;rma000    ERSCLR
+;rma000 
+;rma000 ENDSTK2:
+;rma000    ON ERROR GOSUB ERRSUB
+
+   LAMP LAMP_ADI,LAMP_NUMBER,RED   ; skd flash red
+   PRINT LOG_ADI, "IN FAIL STATE"
+   SA_MESSAGE = FAIL_MSG
+   PRINT LOG_ADI, "%p",FAIL_MSG
+   TIMEROFF IBAD_TMR
+   IF (DEV_IN_MANUAL_FG) THEN
+      DEV_IN_MANUAL_FG = 0
+
+   ;Clear the sequence auto bit ($T5) for all devices specified in the
+   ;device state forms.
+   CIP90_ACID_RECLAIM_VLV:DEV_TMP0 = AND(CIP90_ACID_RECLAIM_VLV:DEV_TMP0,NOT(T_5))        ;8230XV303
+   CIP90_CSS_RELEASE_VLV:DEV_TMP0 = AND(CIP90_CSS_RELEASE_VLV:DEV_TMP0,NOT(T_5))          ;8236XV304
+   CIP90_ACID_CSS_BLDBLK_VLV:DEV_TMP0 = AND(CIP90_ACID_CSS_BLDBLK_VLV:DEV_TMP0,NOT(T_5))  ;8230BB304
+   CIP90_STRAINER_INLT_VLV:DEV_TMP0 = AND(CIP90_STRAINER_INLT_VLV:DEV_TMP0,NOT(T_5))      ;8230XV301
+   CIP90_STRAINER_BYPASS_VLV:DEV_TMP0 = AND(CIP90_STRAINER_BYPASS_VLV:DEV_TMP0,NOT(T_5)) ;8230XV302
+;JMS004   CIP90_CHLORINE_VLV:DEV_TMP0 = AND(CIP90_CHLORINE_VLV:DEV_TMP0,NOT(T_5))                ;8238XV101
+   CIP90_CSS_SUPPLY_VLV:DEV_TMP0 = AND(CIP90_CSS_SUPPLY_VLV:DEV_TMP0,NOT(T_5))            ;8236XV305
+   CIP90_AMBIENT_WTR_BLDBLK_VLV:DEV_TMP0 = AND(CIP90_AMBIENT_WTR_BLDBLK_VLV:DEV_TMP0,NOT(T_5))       ;8230BB316
+   CIP90_CSS_BLDBLK_VLV:DEV_TMP0 = AND(CIP90_CSS_BLDBLK_VLV:DEV_TMP0,NOT(T_5))            ;8230BB401
+   CIP90_CSS_SUPPY_PMP:DEV_TMP0 = AND(CIP90_CSS_SUPPY_PMP:DEV_TMP0,NOT(T_5))              ;8236P3
+
+		TURNOFF 'CLO2DOT0001'   ;VCM024
+   GOSUB CLSFCOOLDILUENTVLV                           ;8627XV1121/8627XV1122  rma001    
+   IF (INSTR(UNIT_SG,"FCOOL1")) THEN
+	BEGIN
+	TURNOFF FCOOL1_DILUENT_UPPR_SEAT		;8627XV1121SL            
+	TURNOFF CENT4_FCOOL1_UPPR_SEAT			;8627XV421SL
+	TURNOFF CENT1_FCOOL1_UPPR_SEAT			;8627XV121SL
+	TURNOFF CENT9_FCOOL1_UPPR_SEAT			;8627XV921SL
+	TURNOFF CENT10_FCOOL1_UPPR_SEAT			;jaz002
+	TURNOFF CENT11_FCOOL1_UPPR_SEAT			;jaz002
+;jaz001      TURNOFF CENT7_FCOOL1_LWR_SEAT		;8627XV81L
+;jaz001      TURNOFF CENT8_FCOOL1_LWR_SEAT    	         ;8627XV811L	    	               
+      END
+   ELSE 
+	BEGIN
+	TURNOFF FCOOL2_DILUENT_UPPR_SEAT		;8627XV1122SL            
+	TURNOFF CENT4_FCOOL2_UPPR_SEAT			;8627XV422SL
+	TURNOFF CENT1_FCOOL2_LWR_SEAT			;8627XV122SL
+	TURNOFF CENT9_FCOOL2_LWR_SEAT			;8627XV922SL
+	TURNOFF CENT10_FCOOL2_LWR_SEAT			;jaz002
+	TURNOFF CENT11_FCOOL2_LWR_SEAT			;jaz002
+;jaz001      TURNOFF CENT7_FCOOL2_LWR_SEAT    	         ;8627XV82L
+;jaz001      TURNOFF CENT8_FCOOL2_LWR_SEAT    	         ;8627XV812L	    	               
+      END
+
+   TIMEROFF SEAT_LIFTER_OFF_STMR    ;reset timers
+   TIMERCLR SEAT_LIFTER_OFF_STMR 
+   TIMEROFF SEAT_LIFTER_ON_STMR
+   TIMERCLR SEAT_LIFTER_ON_STMR
+
+   ;Valves in PCM4
+	IF (INSTR(CFT_FCOOL_CIP90_RESERVE_SG_ALLOF4,UNIT_SG)) THEN
+      GOSUB CLSCIP90CFTFCOOLCSSVLV                         ;8400XV107
+   GOSUB CLSFCOOLCSSVLV                               ;8627XV1221/8627XV1222
+
+   ;CIP Valves in PCM6
+	GOSUB CLSCIP90CSSSUPPYPMP			                  ;8236P3
+	GOSUB CLSCIP90AMBIENTWTRBLDBLKVLV			         ;8230BB316
+	GOSUB CLSCIP90CSSSUPPLYVLV			                  ;8236XV305
+	PUTMANL CSS_SUPPLY_FLOW_CTRL_VLV                   ;8236FC1
+	PUTOUT CSS_SUPPLY_FLOW_CTRL_VLV,MIN_OUT
+;JMS004	GOSUB CLSCIP90CHLORINEVLV			                  ;8238XV101
+	GOSUB CLSCIP90ACIDRECLAIMVLV			               ;8230XV303
+	GOSUB CLSCIP90CSSRELEASEVLV			               ;8236XV304
+	GOSUB CLSCIP90ACIDCSSBLDBLKVLV			            ;8230BB304
+	GOSUB CLSCIP90CSSBLDBLKVLV			                  ;8230BB401
+	GOSUB CLSCIP90STRAINERINLTVLV			               ;8230XV301
+   GOSUB CLSCIP90STRAINERBYPASSVLV			            ;8230XV302
+         
+   SA_2_MESSAGE = ""
+   SA_3_MESSAGE = ""
+   SA_4_MESSAGE = ""
+   SA_5_MESSAGE = ""
+
+FLOOP:
+   ;----------------------------------
+   ;       transition conditions
+   ;----------------------------------
+   ;Continue command
+   IF (SC_SA_CONT_CMD) THEN
+      BEGIN
+      DEV_FAILED_FG = 0
+		ON SA_STATE GOTO ST1,ST2,ST3,ST4,ST5,ST6,ST7,ST8,ST9,ST10
+      END
+
+   WAIT 1
+   GOTO FLOOP
+
+;===============================================================================
+;            HOLD
+;===============================================================================
+HOLDSUB:
+   SEQ_STATUS = "HOLD"
+	STACKCLR 	;rma000
+;rma000   HRSCLR
+
+   TIMEROFF STEP_TMR                             ;stop timer
+   TIMEROFF CIP_CSR_STMR
+
+;rma000   ON ERROR GOSUB ERRSTK
+;rma000
+;rma000   FOR STK_CNT = 1 TO 10 STEP 1
+;rma000      RETCLR
+;rma000   NEXT STK_CNT
+;rma000   GOTO ENDSTK
+;rma000 ERRSTK:
+;rma000   ERSCLR
+;rma000
+;rma000 ENDSTK:
+;rma000   ON ERROR GOSUB ERRSUB
+
+		TURNOFF 'CLO2DOT0001'   ;VCM024
+
+   GOSUB RUNCMDDEV
+
+   LAMP LAMP_ADI,LAMP_NUMBER,RED   ; skd flash red
+   PRINT LOG_ADI, "IN HOLD STATE"
+   TIMEROFF IBAD_TMR
+   TIMERCLR IBAD_TMR
+
+   SA_2_MESSAGE = ""
+   SA_3_MESSAGE = ""
+   SA_4_MESSAGE = ""
+   SA_5_MESSAGE = ""
+
+HLOOP:
+   ;----------------------------------
+   ;       transition conditions
+   ;----------------------------------
+   IF (SC_SA_ATNS_CMD) THEN
+      BEGIN
+      GOSUB CALCNEWSTATE              
+      GOSUB PILOT901          
+      TIMERCLR STEP_TMR
+      END
+
+   ;Continue command
+   IF (SC_SA_CONT_CMD) THEN
+      BEGIN
+      DEV_FAILED_FG = 0
+		ON SA_STATE GOTO ST1,ST2,ST3,ST4,ST5,ST6,ST7,ST8,ST9,ST10
+      END
+
+   IF (ESTOP_CIP_FG & INSTR(SA_STATUS,"SETUP CHECK")) THEN    
+      BEGIN
+      CIP_901_PHENO_RESULT = OPER_RESPONSE
+      CIP_901_CL2_PPM = CL2_PPM
+      CIP_REQ_PTR = CIP_RELEASE
+      OPER_RESPONSE = ""
+      DEV_IN_MANUAL_FG = 0     
+      IBAD_FG = 0                 
+      DEV_FAILED_FG = 0     
+      VCHK_FAILED_FG = 0
+     PRINT LOG_ADI, "FCCIP ABORT"
+     GOTO ST1                                
+     END
+
+   WAIT 1
+   GOTO HLOOP
+
+;===============================================================================
+;               PROGRAM INITIALIZATION (STANDARD SHELL SUBROUTINE)
+;===============================================================================
+SAINIT:
+
+   RETURN
+
+;===============================================================================
+;               STATE INITIALIZATION (STANDARD SHELL SUBROUTINE)
+;===============================================================================
+STATEINIT:
+
+   GOSUB GETSASTATUS                               ;Get sa status
+   GOSUB TDINTOSTATE                               ;Transition into state
+   GOSUB STATEINITVAR                              ;Init variables
+   GOSUB CLRCMD                                    ;Clear commands
+
+   MSG_ACK_CMD = 0
+   FC_EX1_FG = 0
+
+   IF (SA_STATE <= 7) THEN                 ;pheno check        
+      GOSUB PILOT901
+
+		TURNOFF 'CLO2DOT0001'   ;VCM024
+
+   IF (!INSTR(SA_STATUS,"CAUSTIC CLEAN") & !INSTR(SA_STATUS,"FIRST RINSE")) THEN          
+		BEGIN
+      CAUSTIC_901_RECLAIM_FG_ALLOF4 = 0                   ;CIP90 flag
+		CAUSTIC_901_RECLAIM_FG = 0  ;cipcom vcm003
+		END
+
+		CIP901_PRERINSE_RECLAIM_FG = 0    ;VCM002
+
+;ldk000 start
+	IF (SA_STATE > 1) & (SA_STATE < 9) THEN
+		CIP_PROGRAM_STEP_INT_901 = SA_STATE - 1
+	ELSE
+		CIP_PROGRAM_STEP_INT_901 = 0
+;ldk000 finish
+
+   RETURN
+
+;===============================================================================
+;		GET SA STATUS (STANDARD SHELL SUBROUTINE)
+;===============================================================================
+GETSASTATUS:
+
+	IF (SA_STATE = 1) THEN
+		SA_STATUS = "SYSTEM OFF"
+	ELSE IF (SA_STATE = 2) THEN
+		SA_STATUS = "SETUP CHECK"
+	ELSE IF (SA_STATE = 3) THEN
+		SA_STATUS = "PRERINSE"
+	ELSE IF (SA_STATE = 4) THEN
+		SA_STATUS = "CAUSTIC CLEAN"
+	ELSE IF (SA_STATE = 5) THEN
+		SA_STATUS = "FIRST RINSE"
+	ELSE IF (SA_STATE = 6) THEN
+		SA_STATUS = "CHLORINE RINSE"
+	ELSE IF (SA_STATE = 7) THEN
+		SA_STATUS = "FINAL RINSE"
+	ELSE IF (SA_STATE = 8) THEN
+		SA_STATUS = "PHENO CHECK"
+	ELSE IF (SA_STATE = 9) THEN
+      SA_STATUS = "DEBREW SETUP CHECK"
+	ELSE IF (SA_STATE = 10) THEN
+      SA_STATUS = "DEBREW OUT"
+	ELSE
+		BEGIN
+		FAIL_MSG = "INVALID STATE ENCOUNTERED"
+		GOTO FAIL
+		END
+
+	RETURN
+
+;===============================================================================
+;               CLEAR COMMANDS (STANDARD SHELL SUBROUTINE)
+;===============================================================================
+CLRCMD:
+
+	SC_SA_CONT_CMD = 0
+   MSG_ACK_CMD = 0
+
+   RETURN
+
+;===============================================================================
+;               CONTINUOUS CHECKS (STANDARD SHELL SUBROUTINE)
+;===============================================================================
+CONTCHK:
+
+   GOSUB IBADCHK                    ;Analog ibad check
+   GOSUB PROXHNDVLVCHK              ;Check prox switches
+   GOSUB CHKPUSHBTTN                ;Check push buttons
+   GOSUB CHKCIPSTATUS               ;Check CIP status
+   GOSUB DEVFAILCHK                 ;Device fault check
+;   GOSUB VCHK                       ;Device fault check
+
+   RETURN
+
+;===============================================================================
+;               ANALOG IBAD CHECKS (STANDARD SHELL SUBROUTINE)
+;===============================================================================
+IBADCHK:
+
+   IBAD_FG = 0
+
+   IF (AND(CSS_SUPPLY_FLOW_CTRL_VLV:AI_CURAL,SB_IBAD)) THEN
+      BEGIN
+      FAIL_MSG = "CSS SUPPLY FLOW CTRL VLV IBAD"
+      IBAD_FG = 1
+      END
+
+   IF (IBAD_FG = 1) THEN
+      TIMERON IBAD_TMR
+   ELSE
+      BEGIN
+      TIMEROFF IBAD_TMR
+      TIMERCLR IBAD_TMR
+      END
+
+   IF (IBAD_TMR > IBAD_SECONDS) THEN
+      GOTO FAIL
+
+   RETURN
+
+;===============================================================================
+;     DEVICE FAILURE CHECKS (STANDARD SHELL SUBROUTINE)
+;===============================================================================
+DEVFAILCHK:
+
+   IF (AND(CIP90_CFT_FCOOL_CSS_VLV:DEV_DFLG,F_0)) THEN               ;8400XV107
+      BEGIN        
+	   FAIL_MSG = "CSS SUPPLY VLV IN FAIL"
+      GOTO FAIL
+      END
+
+   ;PCM6 CIP Devices
+ 	IF (AND(CIP90_CL_TEST_DRAIN_VLV:DEV_DFLG,F_0)) THEN         ;8236XV303
+      BEGIN
+	   FAIL_MSG = "CL TEST DRAIN VLV FAIL"
+      GOTO FAIL
+      END
+   
+ 	IF (AND(CIP90_ACID_RECLAIM_VLV:DEV_DFLG,F_0)) THEN         ;8230XV303
+      BEGIN
+   	FAIL_MSG = "ACID RECLAIM VALVE FAIL"
+      GOTO FAIL
+      END
+
+ 	IF (AND(CIP90_CSS_RELEASE_VLV:DEV_DFLG,F_0)) THEN          ;8236XV304
+      BEGIN
+	   FAIL_MSG = "CSS RELEASE VALVE FAIL"
+      GOTO FAIL
+      END
+
+ 	IF (AND(CIP90_ACID_CSS_BLDBLK_VLV:DEV_DFLG,F_0)) THEN      ;8230BB304
+      BEGIN
+   	FAIL_MSG = "ACID CSS BLKBDVLV FAIL"
+      GOTO FAIL
+      END
+
+ 	IF (AND(CIP90_STRAINER_INLT_VLV:DEV_DFLG,F_0)) THEN        ;8230XV301
+      BEGIN
+	   FAIL_MSG = "STRAINER INLT VLV FAIL"
+      GOTO FAIL
+      END
+
+ 	IF (AND(CIP90_STRAINER_BYPASS_VLV:DEV_DFLG,F_0)) THEN       ;8230XV302
+      BEGIN
+	   FAIL_MSG = "STRAINER BYPASS VLV FAIL"
+      GOTO FAIL
+      END
+
+; 	IF (AND(CIP90_CHLORINE_VLV:DEV_DFLG,F_0)) THEN             ;8238XV101
+;      BEGIN
+;	   FAIL_MSG = "CHLORINE EDUCTOR VL FAIL"
+;      GOTO FAIL
+;      END
+
+ 	IF (AND(CIP90_CSS_SUPPLY_VLV:DEV_DFLG,F_0)) THEN           ;8236XV305
+      BEGIN
+	   FAIL_MSG = "CSS SUPPLY VLV FAIL"
+      GOTO FAIL
+      END
+
+ 	IF (AND(CIP90_AMBIENT_WTR_BLDBLK_VLV:DEV_DFLG,F_0)) THEN   ;8230BB316
+      BEGIN
+	   FAIL_MSG = "AMBIENT H20 BLKBDVLV FAIL"
+      GOTO FAIL
+      END
+
+ 	IF (AND(CIP90_CSS_BLDBLK_VLV:DEV_DFLG,F_0)) THEN           ;8230BB401
+      BEGIN
+	   FAIL_MSG = "CAUSTIC BLKBDVLV FAIL"
+      GOTO FAIL
+      END
+
+ 	IF (AND(CIP90_CSS_SUPPY_PMP:DEV_DFLG,F_0)) THEN            ;8236P3
+      BEGIN
+	   FAIL_MSG = "CSS SUPPLY PMP FAIL CLS"
+      GOTO FAIL
+      END
+
+	RETURN
+
+;===============================================================================
+;               CALCULATE NEW STATE (STANDARD SHELL SUBROUTINE)
+;===============================================================================
+CALCNEWSTATE:
+
+   SC_SA_ATNS_CMD = 0              ;Clear sc sa atns cmd
+
+	IF (SA_STATE >= 10) THEN	   ;Last state number
+		SA_STATE = 1
+	ELSE
+		SA_STATE = (SA_STATE + 1)
+
+	GOSUB GETSASTATUS		            ;Get sa status
+
+   RETURN
+
+;===============================================================================	
+;		CHECK CIP SYSTEM						
+;===============================================================================	
+CHKCIPSTATUS:
+
+   TEMP_SG = ""
+
+;   IF (!P4P6_COMM_OK_FG_ALLOF4) THEN            ;comm fg set in p4ilkall 
+;      TEMP_SG = "COMM LOSS W/ CIP PCM6"
+
+   ;flags from cip 90 are cross pcm communicaiton from PCM6
+   IF (CIP_901_BUSY_FG_ALLOF4) THEN
+      TEMP_SG = "CIP SYSTEM IS BUSY"
+
+   IF (CIP90_CAUS_MAKEUP_RUN_FG_ALLOF4) THEN
+      TEMP_SG = "CIP SYS MAKING UP CAUSTIC"
+
+   ;If Either the CSR Release valve or Caustic tank reclaim valve
+   ;failed, this flag will be set by the ilk program.
+   IF (CIP_901_CSR_RTN_FAIL_FG_ALLOF4) THEN
+      TEMP_SG = "CIP CSR RETuRN VLV FAIL"
+
+   ;Timer started in SADEV program
+   IF ((CIP90_CSS_SUPPY_PMP:DEV_STAT != S_0) & CSR_FLOW_DET_STMR >= FLOW_DELAY_STIME) THEN
+      BEGIN
+      TIMEROFF CSR_FLOW_DET_STMR
+      IF (CSR_FLOW_SWITCH:DEV_STAT = S_1) THEN        ;S_2 = no flow
+         TEMP_SG = "CSR FLOW DETECT FAILURE"
+      END
+
+   IF (STRLEN(TEMP_SG) > 2) THEN
+      BEGIN
+      IF (INSTR(SA_STATUS,"SETUP CHECK")) THEN
+         BEGIN
+         SA_MESSAGE = TEMP_SG
+         LAMP LAMP_ADI, LAMP_NUMBER, YELLOW      ;SKID = YELLOW
+         END
+      ELSE
+         BEGIN
+         FAIL_MSG = TEMP_SG
+         GOTO FAIL
+         END
+      END
+   
+   SA_MESSAGE = ""
+
+	RETURN										
+
+;===============================================================================	
+;		CHECK DEVICES IN MANUAL						
+;===============================================================================	
+CHKMAN:
+
+   ASSIGN DEV_PTR = CIP90_ACID_RECLAIM_VLV         ;8230XV303            
+   FAIL_MSG = "ACID RECLAIM VALVE MANL"
+   GOSUB MANLCHK
+
+   ASSIGN DEV_PTR = CIP90_CSS_RELEASE_VLV          ;8236XV304            
+   FAIL_MSG = "CSS RELEASE VALVE MANL"
+   GOSUB MANLCHK
+
+   ASSIGN DEV_PTR = CIP90_ACID_CSS_BLDBLK_VLV      ;8230BB304            
+   FAIL_MSG = "ACID CSS BLKBDVLV MANL"
+   GOSUB MANLCHK
+
+   ASSIGN DEV_PTR = CIP90_STRAINER_INLT_VLV        ;8230XV301            
+   FAIL_MSG = "STRAINER INLET VALVE MANL"
+   GOSUB MANLCHK
+
+   ASSIGN DEV_PTR = CIP90_STRAINER_BYPASS_VLV      ;8230XV302            
+   FAIL_MSG = "STRAINER BYPASS VALVE MANL"
+   GOSUB MANLCHK
+
+;JMS004   ASSIGN DEV_PTR = CIP90_CHLORINE_VLV             ;8238XV101            
+;   FAIL_MSG = "CHLORINE EDUCTOR VALVE MANL"
+;   GOSUB MANLCHK
+
+   ASSIGN DEV_PTR = CIP90_CSS_SUPPLY_VLV           ;8236XV305            
+   FAIL_MSG = "CSS SUPPLY VALVE MANL"
+   GOSUB MANLCHK
+
+   ASSIGN DEV_PTR = CIP90_AMBIENT_WTR_BLDBLK_VLV   ;8230BB316            
+   FAIL_MSG = "AMBIENT H20 SPLY BLKBDVLV MANL"
+   GOSUB MANLCHK
+
+   ASSIGN DEV_PTR = CIP90_CSS_BLDBLK_VLV           ;8230BB401            
+   FAIL_MSG = "CAUSTIC CSS BLKBDVLV MANL"
+   GOSUB MANLCHK
+
+   ASSIGN DEV_PTR = CIP90_CSS_SUPPY_PMP            ;8236P3               
+   FAIL_MSG = "CSS SUPPLY PUMP MANL"
+   GOSUB MANLCHK
+
+   RETURN
+
+;===============================================================================
+;       CHECK PUSH BUTTONS   
+;===============================================================================
+CHKPUSHBTTN:
+
+   IF (!CIP90_ESTOP8:DIN_VAL) THEN                 ; 8236PB08
+      BEGIN
+      FAIL_MSG = "8236PB08 E-STOP PUSHED"
+      GOTO FAIL
+      END
+
+   IF (!CIP90_ESTOP10:DIN_VAL) THEN                ; 8236PB10
+      BEGIN
+      FAIL_MSG = "8236PB10 E-STOP PUSHED"
+      GOTO FAIL
+      END
+
+   IF (!CIP90_ESTOP11:DIN_VAL) THEN                ; 8236PB11
+      BEGIN
+      FAIL_MSG = "8236PB11 E-STOP PUSHED"
+      GOTO FAIL
+      END
+
+   IF (!CIP90_ESTOP13:DIN_VAL) THEN                ; 8236PB13
+      BEGIN
+      FAIL_MSG = "8236PB13 E-STOP PUSHED"
+      GOTO FAIL
+      END
+
+   IF (!CIP90_ESTOP14:DIN_VAL) THEN                ; 8236PB14
+      BEGIN
+      FAIL_MSG = "8236PB14 E-STOP PUSHED"
+      GOTO FAIL
+      END
+
+   IF (!CIP90_ESTOP15:DIN_VAL) THEN                ; 8236PB15
+      BEGIN
+      FAIL_MSG = "8236PB15 E-STOP PUSHED"
+      GOTO FAIL
+      END
+
+   RETURN
+
+;=======================================================================
+;          PILOT901
+;=======================================================================
+PILOT901:
+
+   ;This routine will turn the run, prerinse, and finrinse pilot lights
+   ;on and off based on the SA_STATUS of a unit using the 90-1 CIP system
+
+   ;Check CIP acquisition status
+   IF (CIP_REQ_PTR = CIP_RELEASE) THEN             ;The CIP has completed
+      BEGIN
+      TURNOFF CIP901_SYSTEM_PILOT24                ;Turn off the 90-1 6CST22 RUN INDICATOR
+      TURNOFF CIP901_SYSTEM_PILOT30                ;Turn off the 90-1 6CST37 RUN INDICATOR
+      TURNOFF CIP901_SYSTEM_PILOT33                ;Turn off the 90-1 6CST39 RUN INDICATOR
+      TURNOFF CIP901_SYSTEM_PILOT39                ;Turn off the 90-1 6CST41 RUN INDICATOR
+      TURNOFF CIP901_SYSTEM_PILOT42                ;Turn off the 90-1 6CST42 RUN INDICATOR
+      TURNOFF CIP901_SYSTEM_PILOT45                ;Turn off the 90-1 6CST59 RUN INDICATOR
+      END
+   ELSE                                            ;CIP is in progress
+      BEGIN
+      TURNON CIP901_SYSTEM_PILOT24                 ;Light the 90-1 6CST22 RUN INDICATOR
+      TURNON CIP901_SYSTEM_PILOT30                 ;Light the 90-1 6CST37 RUN INDICATOR
+      TURNON CIP901_SYSTEM_PILOT33                 ;Light the 90-1 6CST39 RUN INDICATOR
+      TURNON CIP901_SYSTEM_PILOT39                 ;Light the 90-1 6CST41 RUN INDICATOR
+      TURNON CIP901_SYSTEM_PILOT42                 ;Light the 90-1 6CST42 RUN INDICATOR
+      TURNON CIP901_SYSTEM_PILOT45                 ;Light the 90-1 6CST59 RUN INDICATOR
+      END
+
+   ;Check Prerinse conditions
+   IF (COMPAR(SA_STATUS,"PRERINSE",8,EQ)) THEN  ;PRERINSE is active
+      BEGIN
+      TURNON CIP901_PRERINSE_PILOT22               ;Light the 90-1 6CST22 PRERINSE INDICATOR
+      TURNON CIP901_PRERINSE_PILOT28               ;Light the 90-1 6CST37 PRERINSE INDICATOR
+      TURNON CIP901_PRERINSE_PILOT31               ;Light the 90-1 6CST39 PRERINSE INDICATOR
+      TURNON CIP901_PRERINSE_PILOT37               ;Light the 90-1 6CST41 PRERINSE INDICATOR
+      TURNON CIP901_PRERINSE_PILOT40               ;Light the 90-1 6CST42 PRERINSE INDICATOR
+      TURNON CIP901_PRERINSE_PILOT43               ;Light the 90-1 6CST59 PRERINSE INDICATOR
+      END
+   ELSE                                            ;PRERINSE is not active
+      BEGIN
+      TURNOFF CIP901_PRERINSE_PILOT22              ;Turn off the 90-1 6CST22 PRERINSE INDICATOR
+      TURNOFF CIP901_PRERINSE_PILOT28              ;Turn off the 90-1 6CST37 PRERINSE INDICATOR
+      TURNOFF CIP901_PRERINSE_PILOT31              ;Turn off the 90-1 6CST39 PRERINSE INDICATOR
+      TURNOFF CIP901_PRERINSE_PILOT37              ;Turn off the 90-1 6CST41 PRERINSE INDICATOR
+      TURNOFF CIP901_PRERINSE_PILOT40              ;Turn off the 90-1 6CST42 PRERINSE INDICATOR
+      TURNOFF CIP901_PRERINSE_PILOT43              ;Turn off the 90-1 6CST59 PRERINSE INDICATOR
+      END
+
+   ;Check First, Final, or Chlorine rinse conditions
+   IF (COMPAR(SA_STATUS,"FIRST RINSE",11,EQ) | COMPAR(SA_STATUS,"FINAL RINSE",11,EQ) | COMPAR(SA_STATUS,"CHLORINE RINSE",14,EQ)) THEN
+      BEGIN
+      TURNON CIP901_OTHRINSE_PILOT23               ;Light the 90-1 6CST22 FINRINSE INDICATOR
+      TURNON CIP901_OTHRINSE_PILOT29               ;Light the 90-1 6CST37 FINRINSE INDICATOR
+      TURNON CIP901_OTHRINSE_PILOT32               ;Light the 90-1 6CST39 FINRINSE INDICATOR
+      TURNON CIP901_OTHRINSE_PILOT38               ;Light the 90-1 6CST41 FINRINSE INDICATOR
+      TURNON CIP901_OTHRINSE_PILOT41               ;Light the 90-1 6CST42 FINRINSE INDICATOR
+      TURNON CIP901_OTHRINSE_PILOT44               ;Light the 90-1 6CST59 FINRINSE INDICATOR
+      END
+   ELSE                                            ;No First, Final, or Chlorine rinse active
+      BEGIN
+      TURNOFF CIP901_OTHRINSE_PILOT23              ;Turn off the 90-1 6CST22 FINRINSE INDICATOR
+      TURNOFF CIP901_OTHRINSE_PILOT29              ;Turn off the 90-1 6CST37 FINRINSE INDICATOR
+      TURNOFF CIP901_OTHRINSE_PILOT32              ;Turn off the 90-1 6CST39 FINRINSE INDICATOR
+      TURNOFF CIP901_OTHRINSE_PILOT38              ;Turn off the 90-1 6CST41 FINRINSE INDICATOR
+      TURNOFF CIP901_OTHRINSE_PILOT41              ;Turn off the 90-1 6CST42 FINRINSE INDICATOR
+      TURNOFF CIP901_OTHRINSE_PILOT44              ;Turn off the 90-1 6CST59 FINRINSE INDICATOR
+      END
+
+   RETURN
+
+;==============================================================================
+;		CSS SUPPLY RESERVE
+;==============================================================================     
+CSSSUPPLYRESERVE:
+
+	IF (COMPAR(CFT_FCOOL_CIP90_RESERVE_SG_ALLOF4,UNIT_SG,STRLEN(UNIT_SG),NE)) THEN
+		BEGIN
+		IF ((STRLEN(CFT_FCOOL_CIP90_RESERVE_SG_ALLOF4) > 0) & COMPAR(CFT_FCOOL_CIP90_RESERVE_SG_ALLOF4," ",1,NE)) THEN	;If reserved by another
+			BEGIN
+		   TEMP_INT = APPEND(FAIL_MSG,"8400XV107 ALREADY OWNED")
+			GOTO FAIL
+			END
+		CFT_FCOOL_CIP90_RESERVE_SG_ALLOF4 = UNIT_SG
+		PRINT LOG_ADI,"8400XV107 RESERVED BY %p",UNIT_SG
+		END
+
+  RETURN
+
+;==============================================================================
+;		CSS SUPPLY RELEASE
+;==============================================================================     
+CSSSUPPLYRELEASE:
+
+   ;If the owner     
+	IF (COMPAR(CFT_FCOOL_CIP90_RESERVE_SG_ALLOF4,UNIT_SG,STRLEN(UNIT_SG),EQ)) THEN
+		BEGIN
+		CFT_FCOOL_CIP90_RESERVE_SG_ALLOF4 = ""		;Release system
+		PRINT LOG_ADI,"8400XV107 RELEASED BY %p",UNIT_SG
+		END
+
+  RETURN
+
+;==============================================================================
+;		CHECK PROXIMITY SWITCHES
+;==============================================================================     
+PROXHNDVLVCHK:
+
+   TEMP_SG = ""
+   IF (INSTR(UNIT_SG,"FCOOL1")) THEN
+      BEGIN
+;TO BE REMOVED
+;   IF (!'8627PX181':DIN_VAL) THEN
+;      TEMP_SG = "8627PX181 SPP1 IS NOT CONNECT"
+;   IF (!'8627PX180':DIN_VAL) THEN
+;      TEMP_SG = "8627PX180 SPP1 IS NOT CONNECT"
+;   IF (!'8627PX179':DIN_VAL) THEN
+;      TEMP_SG = "8627PX179 SPP1 IS NOT CONNECT"
+;   IF ('8400HV171':DEV_STAT != S_0) THEN
+;      TEMP_SG = "8400HV171 SPP44 IS NOT CLOSED"
+;   IF ('8400HV181':DEV_STAT != S_0) THEN
+;      TEMP_SG = "8400HV181 SPP44 IS NOT CLOSED"
+;   IF (CENT_FEED_TNK_SEL = 1) THEN
+;      BEGIN
+;      IF (!'8412PX111':DIN_VAL) THEN
+;         TEMP_SG = "8412PX111 SPP44 IS NOT CONNECT"
+;      IF ('8400HV14':DEV_STAT != S_1) THEN
+;         TEMP_SG = "8400HV14 SPP44 IS NOT OPEN"
+;      IF ('8412HV71':DEV_STAT != S_1) THEN
+;         TEMP_SG = "8412HV71 SPP44 IS NOT OPEN"
+;      END
+;   ELSE IF (CENT_FEED_TNK_SEL = 2) THEN
+;      BEGIN
+;      IF ('8400HV14':DEV_STAT = S_1) & ('8400HV24':DEV_STAT = S_1) THEN
+;         TEMP_SG = "8400HV14/24 SPP44 ARE OPEN"
+;      IF ('8400HV14':DEV_STAT = S_1) THEN
+;         BEGIN
+;         IF (!'8412PX112':DIN_VAL) THEN
+;            TEMP_SG = "8412PX112 SPP44 IS NOT CONNECT"
+;         IF ('8412HV81':DEV_STAT != S_1) THEN
+;            TEMP_SG = "8412HV81 SPP44 IS NOT OPEN"
+;         END
+;      ELSE IF ('8400HV24':DEV_STAT = S_1) THEN
+;         BEGIN
+;         IF (!'8412PX113':DIN_VAL) THEN
+;            TEMP_SG = "8412PX113 SPP44 IS NOT CONNECT"
+;         IF ('8412HV91':DEV_STAT != S_1) THEN
+;            TEMP_SG = "8412HV91 SPP44 IS NOT OPEN"
+;         END
+;      ELSE
+;         TEMP_SG = "8400HV14/24 SPP44 ARE CLOSED"
+;      END
+;   ELSE                            ;CFT = 3
+;      BEGIN
+;      IF (!'8412PX114':DIN_VAL) THEN
+;         TEMP_SG = "8412PX114 SPP44 IS NOT CONNECT"
+;      IF ('8400HV24':DEV_STAT != S_1) THEN
+;         TEMP_SG = "8400HV24 SPP44 IS NOT OPEN"
+;      IF ('8412HV101':DEV_STAT != S_1) THEN
+;         TEMP_SG = "8412HV101 SPP44 IS NOT OPEN"
+;      END
+;TO BE REMOVED				COOLER1...
+      IF (!'8606PX113':DIN_VAL) THEN          
+         TEMP_SG = "8606PX113 IS NOT CONNECT"
+      IF (!'6PX70':DIN_VAL) THEN
+         TEMP_SG = "6PX70 SPP77 IS NOT CONNECT"
+;rmaxxx      IF ('8627PX100':DIN_VAL = 1) THEN  
+;rmaxxx         TEMP_SG = "CFG7 8627PX100 TURNBACK ON"
+;rmaxxx      IF ('8627PX103':DIN_VAL = 1) THEN                               
+;rmaxxx         TEMP_SG = "CFG8 8627PX103 TURNBACK ON"   
+		END
+   ELSE                    ;FCOOL2
+      BEGIN
+;TO BE REMOVED
+;      IF (!'8627PX188':DIN_VAL) THEN
+;         TEMP_SG = "8627PX188 SPP1 IS NOT CONNECT"
+;      IF (!'8627PX189':DIN_VAL) THEN
+;         TEMP_SG = "8627PX189 SPP1 IS NOT CONNECT"
+;      IF (!'8627PX190':DIN_VAL) THEN
+;      IF ('8400HV211':DEV_STAT != S_0) THEN
+;         TEMP_SG = "8400HV211 SPP44 IS NOT CLOSED"
+;      IF ('8400HV201':DEV_STAT != S_0) THEN
+;         TEMP_SG = "8400HV201 SPP44 IS NOT CLOSED"
+;         TEMP_SG = "8627PX190 SPP1 IS NOT CONNECT"
+;      IF (CENT_FEED_TNK_SEL = 1) THEN
+;         BEGIN
+;         IF (!'8412PX107':DIN_VAL) THEN
+;            TEMP_SG = "8412PX107 SPP44 IS NOT CONNECT"
+;         IF ('8400HV44':DEV_STAT != S_1) THEN
+;            TEMP_SG = "8400HV44 SPP44 IS NOT OPEN"
+;         IF ('8412HV71':DEV_STAT != S_1) THEN
+;            TEMP_SG = "8412HV71 SPP44 IS NOT OPEN"
+;         END
+;      ELSE IF (CENT_FEED_TNK_SEL = 2) THEN
+;         BEGIN
+;         IF ('8400HV44':DEV_STAT = S_1) & ('8400HV34':DEV_STAT = S_1) THEN
+;            TEMP_SG = "8400HV44/34 SPP44 ARE OPEN"
+;         IF ('8400HV44':DEV_STAT = S_1) THEN
+;            BEGIN
+;            IF (!'8412PX108':DIN_VAL) THEN
+;               TEMP_SG = "8412PX108 SPP44 IS NOT CONNECT"
+;            IF ('8412HV81':DEV_STAT != S_1) THEN
+;               TEMP_SG = "8412HV81 SPP44 IS NOT OPEN"
+;            END
+;         ELSE IF ('8400HV34':DEV_STAT = S_1) THEN
+;            BEGIN
+;            IF (!'8412PX109':DIN_VAL) THEN
+;               TEMP_SG = "8412PX109 SPP44 IS NOT CONNECT"
+;            IF ('8412HV91':DEV_STAT != S_1) THEN
+;               TEMP_SG = "8412HV91 SPP44 IS NOT OPEN"
+;            END
+;         ELSE
+;            TEMP_SG = "8400HV44/34 SPP44 ARE CLOSED"
+;         END
+;      ELSE                            ;CFT = 3
+;         BEGIN
+;         IF (!'8412PX110':DIN_VAL) THEN
+;            TEMP_SG = "8412PX110 SPP44 IS NOT CONNECT"
+;         IF ('8400HV34':DEV_STAT != S_1) THEN
+;            TEMP_SG = "8400HV34 SPP44 IS NOT OPEN"
+;         IF ('8412HV101':DEV_STAT != S_1) THEN
+;            TEMP_SG = "8412HV101 SPP44 IS NOT OPEN"
+;         END
+;TO BE REMOVED				 COOLER2
+      IF (!'8606PX118':DIN_VAL) THEN          
+         TEMP_SG = "8606PX118 NOT CONNECT"
+      IF (!'6PX71':DIN_VAL) THEN
+         TEMP_SG = "6PX71 SPP77 IS NOT CONNECT"
+;rmaxxx      IF ('8627PX101':DIN_VAL = 1) THEN  
+;rmaxxx         TEMP_SG = "CFG7 8627PX101 TURNBACK ON"
+;rmaxxx      IF ('8627PX104':DIN_VAL = 1) THEN                               
+;rmaxxx         TEMP_SG = "CFG8 8627PX104 TURNBACK ON"                             
+      END
+
+   ;For both coolers
+   IF ('6LS2':DIN_VAL) THEN        ;90F CIP CAUSTIC MANWAY SWITCH
+      TEMP_SG = "6LS2 NOT CLOSED"
+;prox valid?   IF (!'6PX63':DIN_VAL) THEN      
+;prox valid?      TEMP_SG = "6PX63 SPP77 IS NOT CONNECT"
+;prox valid?   IF ('8400HV11':DEV_STAT != S_1) THEN
+;prox valid?      TEMP_SG = "8400HV11 SPP45 IS NOT OPEN"
+;prox valid?   IF ('8412PX92':DIN_VAL) THEN
+;prox valid?      BEGIN
+;prox valid?      IF ('8413HV21':DEV_STAT != S_1) THEN
+;prox valid?         TEMP_SG = "8413HV21 SPP45 IS NOT OPEN"
+;prox valid?      END
+;prox valid?   ELSE IF ('8412PX93':DIN_VAL) THEN
+;prox valid?      BEGIN
+;prox valid?      IF ('8413HV11':DEV_STAT != S_1) THEN
+;prox valid?         TEMP_SG = "8413HV11 SPP45 IS NOT OPEN"
+;prox valid?      END
+
+   IF (STRLEN(TEMP_SG) > 2) THEN
+      BEGIN
+      IF (INSTR(SA_STATUS,"SETUP CHECK")) THEN
+         BEGIN
+         SA_MESSAGE = TEMP_SG
+         LAMP LAMP_ADI, LAMP_NUMBER, YELLOW      ;SKID = YELLOW
+         END
+      ELSE
+         BEGIN
+         FAIL_MSG = TEMP_SG
+         GOTO FAIL
+         END
+      END
+
+  SA_MESSAGE = TEMP_SG
+
+  RETURN
+
+;==============================================================================
+;               DEBREW PROXIMITY SWITCH CHECK
+;==============================================================================
+DEBREWPROXCHK:
+
+   IF (INSTR(UNIT_SG,"FCOOL1")) THEN
+      BEGIN
+      IF ('8606PX113':DIN_VAL) THEN           
+         BEGIN
+         FAIL_MSG = "8606PX113 IS CONNECTED"
+         GOTO FAIL
+         END
+
+;TO BE REMOVED? 
+;     IF (!'8627PX181':DIN_VAL) THEN
+;        BEGIN
+;        FAIL_MSG = "8627PX181 SPP1 IS NOT CONNECT"
+;        GOTO FAIL
+;        END
+
+;     IF (!'8627PX180':DIN_VAL) THEN
+;        BEGIN
+;        FAIL_MSG = "8627PX180 SPP1 IS NOT CONNECT"
+;        GOTO FAIL
+;        END
+
+;     IF (!'8627PX179':DIN_VAL) THEN
+;        BEGIN
+;        FAIL_MSG = "8627PX179 SPP1 IS NOT CONNECT"
+;        GOTO FAIL
+;        END
+
+;     IF ('8400HV171':DEV_STAT != S_0) THEN
+;        BEGIN
+;        FAIL_MSG = "8400HV171 SPP44 IS NOT CLOSED"
+;        GOTO FAIL
+;        END
+
+;     IF ('8400HV181':DEV_STAT != S_0) THEN
+;        BEGIN
+;        FAIL_MSG = "8400HV181 SPP44 IS NOT CLOSED"
+;        GOTO FAIL
+;        END
+
+;     IF (CENT_FEED_TNK_SEL = 1) THEN
+;        BEGIN
+;        IF (!'8412PX111':DIN_VAL) THEN
+;           BEGIN
+;           FAIL_MSG = "8412PX111 SPP44 IS NOT CONNECT"
+;           GOTO FAIL
+;           END
+;        IF ('8400HV14':DEV_STAT != S_1) THEN
+;           BEGIN
+;           FAIL_MSG = "8400HV14 SPP44 IS NOT OPEN"
+;           GOTO FAIL
+;           END
+;        IF ('8412HV71':DEV_STAT != S_1) THEN
+;           BEGIN
+;           FAIL_MSG = "8412HV71 SPP44 IS NOT OPEN"
+;           GOTO FAIL
+;           END
+;        END
+;     ELSE IF (CENT_FEED_TNK_SEL = 2) THEN
+;        BEGIN
+;        IF ('8400HV14':DEV_STAT = S_1) & ('8400HV24':DEV_STAT = S_1) THEN
+;           BEGIN
+;           FAIL_MSG = "8400HV14/24 SPP44 ARE OPEN"
+;           GOTO FAIL
+;           END
+;        IF ('8400HV14':DEV_STAT = S_1) THEN
+;           BEGIN
+;           IF (!'8412PX112':DIN_VAL) THEN
+;              BEGIN
+;              FAIL_MSG = "8412PX112 SPP44 IS NOT CONNECT"
+;              GOTO FAIL
+;            END
+;           IF ('8412HV81':DEV_STAT != S_1) THEN
+;              BEGIN
+;              FAIL_MSG = "8412HV81 SPP44 IS NOT OPEN"
+;              GOTO FAIL
+;              END
+;           END
+;        ELSE IF ('8400HV24':DEV_STAT = S_1) THEN
+;           BEGIN
+;           IF (!'8412PX113':DIN_VAL) THEN
+;              BEGIN
+;              FAIL_MSG = "8412PX113 SPP44 IS NOT CONNECT"
+;              GOTO FAIL
+;              END
+;           IF ('8412HV91':DEV_STAT != S_1) THEN
+;              BEGIN
+;              FAIL_MSG = "8412HV91 SPP44 IS NOT OPEN"
+;              GOTO FAIL
+;              END
+;           END
+;        ELSE
+;           BEGIN
+;           FAIL_MSG = "8400HV14/24 SPP44 ARE CLOSED"
+;           GOTO FAIL
+;           END
+;        END
+;     ELSE                            ;CFT = 3
+;        BEGIN
+;        IF (!'8412PX114':DIN_VAL) THEN
+;           BEGIN
+;           FAIL_MSG = "8412PX114 SPP44 IS NOT CONNECT"
+;           GOTO FAIL
+;           END
+;        IF ('8400HV24':DEV_STAT != S_1) THEN
+;           BEGIN
+;           FAIL_MSG = "8400HV24 SPP44 IS NOT OPEN"
+;           GOTO FAIL
+;           END
+;        IF ('8412HV101':DEV_STAT != S_1) THEN
+;           BEGIN
+;           FAIL_MSG = "8412HV101 SPP44 IS NOT OPEN"
+;           GOTO FAIL
+;           END
+;        END
+;TO BE REMOVED
+      END
+   ELSE                             ;FCOOL2
+      BEGIN
+      IF ('8606PX118':DIN_VAL) THEN    
+         BEGIN
+         FAIL_MSG = "8606PX118 IS CONNECTED"
+         GOTO FAIL
+         END 
+;;;TO BE REMOVED
+;      IF (!'8627PX188':DIN_VAL) THEN
+;         BEGIN
+;         FAIL_MSG = "8627PX188 SPP1 IS NOT CONNECT"
+;         GOTO FAIL
+;         END
+;                IF (!'8627PX189':DIN_VAL) THEN
+;                        BEGIN
+;                        FAIL_MSG = "8627PX189 SPP1 IS NOT CONNECT"
+;                        GOTO FAIL
+;                        END
+;                IF (!'8627PX190':DIN_VAL) THEN
+;                        BEGIN
+;                        FAIL_MSG = "8627PX190 SPP1 IS NOT CONNECT"
+;                        GOTO FAIL
+;                        END
+;                IF ('8400HV211':DEV_STAT != S_0) THEN
+;                        BEGIN
+;                        FAIL_MSG = "8400HV211 SPP44 IS NOT CLOSED"
+;                        GOTO FAIL
+;                        END
+;                IF ('8400HV201':DEV_STAT != S_0) THEN
+;                        BEGIN
+;                        FAIL_MSG = "8400HV201 SPP44 IS NOT CLOSED"
+;                        GOTO FAIL
+;                        END
+;                IF (CENT_FEED_TNK_SEL = 1) THEN
+;                        BEGIN
+;                        IF (!'8412PX107':DIN_VAL) THEN
+;                                BEGIN
+;                                FAIL_MSG = "8412PX107 SPP44 IS NOT CONNECT"
+;                                GOTO FAIL
+;                                END
+;                        IF ('8400HV44':DEV_STAT != S_1) THEN
+;                                BEGIN
+;                                FAIL_MSG = "8400HV44 SPP44 IS NOT OPEN"
+;                                GOTO FAIL
+;                                END
+;                        IF ('8412HV71':DEV_STAT != S_1) THEN
+;                                BEGIN
+;                                FAIL_MSG = "8412HV71 SPP44 IS NOT OPEN"
+;                                GOTO FAIL
+;                                END
+;                        END
+;                ELSE IF (CENT_FEED_TNK_SEL = 2) THEN
+;                        BEGIN
+;                        IF ('8400HV44':DEV_STAT = S_1) & ('8400HV34':DEV_STAT = S_1) THEN
+;                                BEGIN
+;                                FAIL_MSG = "8400HV44/34 SPP44 ARE OPEN"
+;                                GOTO FAIL
+;                                END
+;                        IF ('8400HV44':DEV_STAT = S_1) THEN
+;                                BEGIN
+;                                IF (!'8412PX108':DIN_VAL) THEN
+;                                        BEGIN
+;                                        FAIL_MSG = "8412PX108 SPP44 IS NOT CONNECT"
+;                                        GOTO FAIL
+;                                        END
+;                                IF ('8412HV81':DEV_STAT != S_1) THEN
+;                                        BEGIN
+;                                        FAIL_MSG = "8412HV81 SPP44 IS NOT OPEN"
+;                                        GOTO FAIL
+;                                        END
+;                                END
+;                        ELSE IF ('8400HV34':DEV_STAT = S_1) THEN
+;                                BEGIN
+;                                IF (!'8412PX109':DIN_VAL) THEN
+;                                        BEGIN
+;                                        FAIL_MSG = "8412PX109 SPP44 IS NOT CONNECT"
+;                                        GOTO FAIL
+;                                        END
+;                                IF ('8412HV91':DEV_STAT != S_1) THEN
+;                                        BEGIN
+;                                        FAIL_MSG = "8412HV91 SPP44 IS NOT OPEN"
+;                                        GOTO FAIL
+;                                        END
+;                                END
+;                        ELSE
+;                                BEGIN
+;                                FAIL_MSG = "8400HV44/34 SPP44 ARE CLOSED"
+;                                GOTO FAIL
+;                                END
+;                        END
+;                ELSE                            ;CFT = 3
+;                        BEGIN
+;                        IF (!'8412PX110':DIN_VAL) THEN
+;                                BEGIN
+;                                FAIL_MSG = "8412PX110 SPP44 IS NOT CONNECT"
+;                                GOTO FAIL
+;                                END
+;                        IF ('8400HV34':DEV_STAT != S_1) THEN
+;                                BEGIN
+;                                FAIL_MSG = "8400HV34 SPP44 IS NOT OPEN"
+;                                GOTO FAIL
+;                                END
+;                        IF ('8412HV101':DEV_STAT != S_1) THEN
+;                                BEGIN
+;                                FAIL_MSG = "8412HV101 SPP44 IS NOT OPEN"
+;                                GOTO FAIL
+;                                END
+;                        END
+;;;;TO BE REMOVED      
+      END
+
+   RETURN
+
+;=============================================================================
+;		CYCLE SEAT LIFTERS
+;=============================================================================
+CYCLESEATLIFT:
+
+	IF (SEAT_LIFTER_ON_STMR >= SEAT_LIFTER_ON_STIME) THEN
+		BEGIN                                           
+      IF (INSTR(UNIT_SG,"FCOOL1")) THEN
+	BEGIN
+	TURNOFF FCOOL1_DILUENT_UPPR_SEAT	    	      ;8627XV1121SL            
+	TURNOFF CENT4_FCOOL1_UPPR_SEAT    	         ;8627XV421SL
+	TURNOFF CENT1_FCOOL1_UPPR_SEAT    	         ;8627XV121SL
+	TURNOFF CENT9_FCOOL1_UPPR_SEAT    	         ;8627XV921SL
+	TURNOFF CENT10_FCOOL1_UPPR_SEAT    	         ;jaz002
+	TURNOFF CENT11_FCOOL1_UPPR_SEAT    	         ;jaz002
+;jaz002         TURNOFF CENT7_FCOOL1_LWR_SEAT    	         ;8627XV81L
+;jaz002         TURNOFF CENT8_FCOOL1_LWR_SEAT    	         ;8627XV811L	    	               
+         END
+      ELSE 
+	BEGIN
+	TURNOFF FCOOL2_DILUENT_UPPR_SEAT		;8627XV1122SL            
+	TURNOFF CENT4_FCOOL2_UPPR_SEAT			;8627XV422SL
+	TURNOFF CENT1_FCOOL2_LWR_SEAT			;8627XV122SL
+	TURNOFF CENT9_FCOOL2_LWR_SEAT			;8627XV1021SL
+	TURNOFF CENT10_FCOOL2_LWR_SEAT			;jaz002
+	TURNOFF CENT11_FCOOL2_LWR_SEAT			;jaz002
+;jaz002	TURNOFF CENT7_FCOOL2_LWR_SEAT			;8627XV82L
+;jaz002	TURNOFF CENT8_FCOOL2_LWR_SEAT			;8627XV812L	    	               
+	END
+		TIMEROFF SEAT_LIFTER_ON_STMR		               ;clear timer
+		TIMERCLR SEAT_LIFTER_ON_STMR
+		TIMERON SEAT_LIFTER_OFF_STMR		               ;start off timer
+		END
+
+	IF (SEAT_LIFTER_OFF_STMR >= SEAT_LIFTER_OFF_STIME) THEN
+		BEGIN
+		IF (INSTR(UNIT_SG,"FCOOL1")) THEN
+			BEGIN
+			TURNON FCOOL1_DILUENT_UPPR_SEAT			;8627XV1121SL            
+			TURNON CENT4_FCOOL1_UPPR_SEAT			;8627XV421SL
+			TURNON CENT1_FCOOL1_UPPR_SEAT			;8627XV121SL
+			TURNON CENT9_FCOOL1_UPPR_SEAT			;8627XV921SL
+			TURNON CENT10_FCOOL1_UPPR_SEAT			;jaz002
+			TURNON CENT11_FCOOL1_UPPR_SEAT			;jaz002
+;jaz001			TURNON CENT7_FCOOL1_LWR_SEAT			;8627XV81L
+;jaz001			TURNON CENT8_FCOOL1_LWR_SEAT			;8627XV811L	    	               
+			END
+		ELSE 
+			BEGIN
+			TURNON FCOOL2_DILUENT_UPPR_SEAT			;8627XV1122SL            
+			TURNON CENT4_FCOOL2_UPPR_SEAT			;8627XV422SL
+			TURNON CENT1_FCOOL2_LWR_SEAT			;8627XV122SL
+			TURNON CENT9_FCOOL2_LWR_SEAT			;8627XV1021SL
+			TURNON CENT10_FCOOL2_LWR_SEAT			;jaz002
+			TURNON CENT11_FCOOL2_LWR_SEAT			;jaz002
+;jaz001			TURNON CENT7_FCOOL2_LWR_SEAT			;8627XV82L
+;jaz001			TURNON CENT8_FCOOL2_LWR_SEAT			;8627XV812L	  
+			END           	               
+		TIMEROFF SEAT_LIFTER_OFF_STMR		               ;clear timer
+		TIMERCLR SEAT_LIFTER_OFF_STMR
+		TIMERON SEAT_LIFTER_ON_STMR		               ;start off timer
+		END
+
+  RETURN
+
+;=============================================================================
+;		CHECK CSS FLOW
+;=============================================================================
+CHKCSSFLOW:
+
+   IF (CSS_SUPPLY_FLOW_CTRL_VLV:AI_MEAS < CSS_LOW_FLOW) THEN
+      BEGIN
+      SA_4_MESSAGE = "LOW CSS FLOW" 
+      TIMERON CSS_LOW_FLOW_STMR
+      LAMP LAMP_ADI, LAMP_NUMBER, YELLOW      ;SKID = YELLOW
+      END
+   ELSE
+      BEGIN
+      SA_4_MESSAGE = "" 
+      TIMEROFF CSS_LOW_FLOW_STMR
+      TIMERCLR CSS_LOW_FLOW_STMR
+      LAMP LAMP_ADI, LAMP_NUMBER, GREEN       ;SKID GREEN
+      END
+
+	IF (CSS_LOW_FLOW_STMR > CSS_LOW_FLOW_STIME) THEN                                  
+      BEGIN      
+      FAIL_MSG = "LOW CSS FLOW"
+      GOTO FAIL
+      END
+
+  RETURN
+
+;=============================================================================
+;		STATE INITALIZE VARIABLES
+;=============================================================================
+STATEINITVAR:
+
+	SEQ_STATUS = ""		;Seq status
+	PRINT LOG_ADI,"IN %p STATE",SA_STATUS
+	SA_MESSAGE = ""			;Sa message
+	SA_2_MESSAGE = ""		;Sa message 2
+	SA_3_MESSAGE = ""		;Sa message 3
+   SA_4_MESSAGE = ""    ;Clear sa message 4
+   SA_5_MESSAGE = ""    ;Clear sa message 5
+   FAIL_MSG = ""
+	ERROR_STRING = ""		;Error string
+	TIMEROFF IBAD_TMR		;Turnoff ibad timer
+	TIMERCLR IBAD_TMR		;clear ibad timer
+   TIMEROFF CSR_FLOW_DET_STMR
+   TIMERCLR CSR_FLOW_DET_STMR
+   TIMEROFF CSS_LOW_FLOW_STMR
+   TIMERCLR CSS_LOW_FLOW_STMR
+   TIMEROFF FC_SUS_COND_TMR  
+   TIMERCLR FC_SUS_COND_TMR
+   SC_SA_ATNS_CMD = 0
+   SC_SA_CONT_CMD = 0
+
+   LAMP LAMP_ADI, LAMP_NUMBER, GREEN       ;SKID GREEN
+   LAST_LAMP_STATE = GREEN
+
+   RETURN
+
+;==============================================================================
+;         RUN COMMAND DEVICES (RUNCMDDEV)
+;==============================================================================
+RUNCMDDEV:
+
+   ;start the command device program and wait until it signals that it
+   ;has completed and has stopped running
+   ;if all devices commanded properly cmd_sa_status = 1
+   ;if a device failed cmd_sa_status is 2
+   ;if we exceed the timeout for completion (150) then goto fail
+
+   ;make sure the program isn't already running
+   WAITUNTIL (PGMSTAT("FCCMDDEV") = NOT_RUNNING) COUNT 150, M1FAIL
+
+   IF (COMPAR(SEQ_STATUS,"FAIL",4,NE)) THEN
+      SA_MESSAGE = "ALIGNING DEVICES"
+   CMD_SA_STATUS = 0
+   RUN "FCCMDDEV"
+
+   ;make sure the program starts
+   WAITUNTIL (PGMSTAT("FCCMDDEV") != NOT_RUNNING) COUNT 150, M2FAIL
+
+   WAITUNTIL ((CMD_SA_STATUS > 0) & (PGMSTAT("FCCMDDEV") = NOT_RUNNING)) COUNT 150, M3FAIL
+
+   IF (CMD_SA_STATUS = 2) THEN
+      GOTO FAIL
+   IF (COMPAR(SEQ_STATUS,"FAIL",4,NE)) THEN
+      SA_MESSAGE = ""
+   RETURN
+
+M1FAIL:
+   FAIL_MSG = "FCCMDDEV ALREADY RUNNING"
+   GOTO FAIL
+M2FAIL:
+   FAIL_MSG = "FCCMDDEV NOT FOUND!"
+   GOTO FAIL
+M3FAIL:
+   FAIL_MSG = "FCCMDDEV PROGRAM TIMEOUT"
+   GOTO FAIL
+
+;===============================================================================
+;		TRANSITION INTO STATE 
+;===============================================================================
+TDINTOSTATE:
+
+	;If entering new state
+	IF(COMPAR(SA_STATUS,LAST_SA_STATUS,STRLEN(SA_STATUS),NE)) THEN
+		BEGIN  		 
+		SA_4_MESSAGE = ""		                        ;Clear sa message 4
+		SA_5_MESSAGE = ""		                        ;Clear sa message 5
+		LAST_SA_STATUS = SA_STATUS		         ;Save sa status
+     	TIMEROFF STEP_TMR		                        ;Reset step timer
+	   TIMERCLR STEP_TMR		  
+      IF (INSTR(SA_STATUS,"PHENO CHECK") | INSTR(SA_STATUS,"DEBREW")) THEN       
+         OPER_RESPONSE = "" 
+      TIMEROFF CIP_CSR_STMR  
+      TIMERCLR CIP_CSR_STMR
+      TIMEROFF STEP_TMR  
+      TIMERCLR STEP_TMR                   
+		END
+
+	RETURN
+
+;==============================================================================
+;          CHECK CIP IN USE
+;==============================================================================
+CHKCIPINUSE:
+
+   ;Check if the CIP system is in use by another unit
+   IF ((STRLEN(CIP_901_VESSEL_CLND) > 2) & !INSTR(CIP_901_VESSEL_CLND,UNIT_SG)) THEN
+      BEGIN
+      FAIL_MSG = "CIP SYS ALREADY RESERVED"
+      GOTO FAIL
+      END
+
+  RETURN
+
+;=============================================================================
+; VCHK - Checks valves for open status.
+;
+;       This routine expects FLAGS which designate whether a test should be
+;       done to see if a device is on.  If the bit is set, the test should be
+;       done.  Flags starting from ZFG600 to ZFG621 are tested.  EQUATEs have
+;       been assigned with real device names instead of UPF names.
+;       SEE VCHKNOTES AT TOP OF PROGRAM.
+;
+;=============================================================================
+VCHK:
+
+   VCHK_FAILED_FG = 0
+   ASSIGN OPN_DEV_PTR = P8236XV303         ; Start at the first flag
+
+   FOR INDEX_INT = 1 TO 12 STEP 1              ; Process 12 flags
+      IF OPN_DEV_PTR THEN             ; If flag is on, process it
+      BEGIN
+         ON INDEX_INT GOSUB P00,P01,P02,P03,P04,P05,P06,P07,P08,P09
+         ON (INDEX_INT - 10) GOSUB P10,P11
+         IF (VCHK_FAILED_FG) THEN          ; If device check failure
+            GOTO FAIL                       ; return
+         END
+      IF (INDEX_INT < 12) THEN              ; If not the last flag
+         STEP OPN_DEV_PTR BY 1   ; Point at next flag
+      NEXT INDEX_INT                              ; Process next integer
+
+   RETURN                                  ; Return to caller
+
+P00:
+   RETURN
+
+P01:
+   RETURN
+
+P02:
+   ASSIGN DEV_PTR = CIP90_CL_TEST_DRAIN_VLV              ;8236XV303 90-1 ACID RECLAIM VALVE
+   FAIL_MSG = "ACID RECLAIM VALVE NOT OPN"
+   GOTO ENDVCHK
+
+P03:
+   ASSIGN DEV_PTR = CIP90_CSS_RELEASE_VLV                ;8236XV304 90-1 CSS RELEASE VALVE
+   FAIL_MSG = "CSS RELEASE VALVE NOT OPN"
+   GOTO ENDVCHK
+
+P04:
+   ASSIGN DEV_PTR = CIP90_ACID_CSS_BLDBLK_VLV            ;8230BB304 90-1 ACID CSS BLKBLD VALVE
+   FAIL_MSG = "ACID CSS BLKBDVLV NOT OPN"
+   GOTO ENDVCHK
+
+P05:
+   ASSIGN DEV_PTR = CIP90_STRAINER_INLT_VLV              ;8230XV301 STRAINER INLET VALVE
+   FAIL_MSG = "STRAINER INLET VALVE NOT OPN"
+   GOTO ENDVCHK
+
+P06:
+   ASSIGN DEV_PTR = CIP90_STRAINER_BYPASS_VLV            ;8230XV302 90-1 STRAINER BYPASS VALVE
+   FAIL_MSG = "STRAINER BYPASS VALVE NOT OPN"
+   GOTO ENDVCHK
+
+P07:
+;JMS004   ASSIGN DEV_PTR = CIP90_CHLORINE_VLV                   ;8238XV101 90-1 CHLORINE EDUCTOR VALVE
+;   FAIL_MSG = "CHLORINE EDUCTOR VALVE NOT OPN"
+   GOTO ENDVCHK
+
+P08:
+   ASSIGN DEV_PTR = CIP90_CSS_SUPPLY_VLV                 ;8236XV305 90-1 CSS SUPPLY VALVE
+   FAIL_MSG = "CSS SUPPLY VALVE NOT OPN"
+   GOTO ENDVCHK
+
+P09:
+   ASSIGN DEV_PTR = CIP90_AMBIENT_WTR_BLDBLK_VLV         ;8230BB316  90-1 AMBIENT H2O SUPPLY BLKBLD VALVE
+   FAIL_MSG = "AMBIENT H20 SPLY BLKBD NOT OPN"
+   GOTO ENDVCHK
+
+P10:
+   ASSIGN DEV_PTR = CIP90_CSS_BLDBLK_VLV                 ;8230BB401 90-1 CAUSTIC CSS BLKBLD VALVE
+   FAIL_MSG = "CAUSTIC CSS BLKBDVLV NOT OPN"
+   GOTO ENDVCHK
+
+P11:
+   ASSIGN DEV_PTR = CIP90_CSS_SUPPY_PMP                  ;8236P3 90-1 CSS SUPPLY PUMP
+   FAIL_MSG = "CSS SUPPLY PUMP NOT OPN"
+   GOTO ENDVCHK
+
+   RETURN
+
+ENDVCHK:
+   IF !AND(DEV_PTR:DEV_STAT,S_1) THEN
+      VCHK_FAILED_FG = 1
+   RETURN
+
+;=============================================================================
+;		CHECK CONDUCTIVITY
+;=============================================================================
+CHKCONDUCT:
+   
+   IF ((STEP_TMR > 0) | (CIP_CSR_STMR >= CIP_DETECT_MAX_STIME)) THEN
+      BEGIN
+      TIMERON STEP_TMR
+      RETURN
+      END
+
+   TIMERON CIP_CSR_STMR                         ;Start CSR timer
+
+   IF (INSTR(SA_STATUS,"RINSE")) THEN
+      FC_SUS_COND_FG = (CIP901_CSR_COND_LOCAL:AI_MEAS < WATER_CONDUCTIVITY)
+   ELSE IF (INSTR(SA_STATUS,"CAUSTIC")) THEN   
+      FC_SUS_COND_FG = (CIP901_CSR_COND_LOCAL:AI_MEAS >= CAUSTIC_CONDUCTIVITY)
+
+   GOSUB SUSCOND
+   IF (!FC_SUS_COND_FG) THEN  
+      BEGIN   
+      IF (INSTR(SA_STATUS,"RINSE")) THEN
+         SA_2_MESSAGE = "WAITING FOR WATER AT CSR"
+      IF (INSTR(SA_STATUS,"CAUSTIC")) THEN
+         SA_2_MESSAGE = "WAITING FOR CAUSTIC AT CSR"
+      END      
+   ELSE
+      BEGIN
+      TIMERON STEP_TMR
+      TIMEROFF CIP_CSR_STMR                        ;Stop timer 
+      END
+
+  RETURN
+
+;===============================================================================
+;		SUSTAINED CONDITION CHECK SUBROUTINE (STANDARD #INCLUDE)
+;===============================================================================
+SUSCOND:
+
+	IF (FC_SUS_COND_FG) THEN			;If condition is true
+		TIMERON FC_SUS_COND_TMR		;Start sustained condition timer
+	ELSE
+		BEGIN
+		TIMEROFF FC_SUS_COND_TMR		;Otherwise stop & clear timer
+		TIMERCLR FC_SUS_COND_TMR
+		END
+
+	FC_SUS_COND_FG = (FC_SUS_COND_TMR >= CSR_SUS_CONDUCT_STIME)	;Return result
+
+	RETURN
+
+;===============================================================================
+;               O P E N         D E V I C E     S U B R O U T I N E
+;===============================================================================
+
+   ;This subroutine will attempt to open any device that it is
+   ;commanded to. The subroutine will check for five things:
+   ;if the program is already in failure hold (DEV_FAILED)
+   ;if the device has been faulted ($f0)
+   ;if the device has been interlocked ($s4)
+   ;if the device is already open ($s1)
+   ;if the device is in manual ($m0) it will be put to auto
+
+OPENDEV:
+
+   ;if the program is already in failure hold
+   ;and device faulted or interlocked (the cause of failure hold)
+   ;then return to the program
+   ;allowing the routine to continue will cause an infinite loop
+   IF (DEV_FAILED_FG & (AND(DEV_PTR:DEV_DFLG,F_0) | AND(DEV_PTR:DEV_STAT,S_4))) THEN
+      GOTO OUTOPN
+
+   ;if the fault bit is set or the interlock bit is set, then send the program to fail
+   IF (AND(DEV_PTR:DEV_DFLG,F_0) | AND(DEV_PTR:DEV_STAT,S_4)) THEN
+      GOTO FLTOPN
+
+   ;if device is already opened, then return to the program
+   IF (AND(DEV_PTR:DEV_STAT,S_1)) THEN
+      GOTO OUTOPN
+   DEV_PTR:DEV_MODE = OR(DEV_PTR:DEV_MODE,M_0)     ;put device into auto
+
+   ;open device and waituntil either device opens or faults
+   OPEN DEV_PTR
+   WAITUNTIL (AND(DEV_PTR:DEV_STAT,S_1) | AND(DEV_PTR:DEV_DFLG,F_0)) COUNT 60,FLTOPN
+
+   ;if device is faulted
+   IF (AND(DEV_PTR:DEV_DFLG,F_0)) THEN
+      BEGIN
+FLTOPN:         
+      DEV_FAILED_FG = 1         ; set failure hold flag
+      GOTO FAIL
+      END
+OUTOPN:
+      RETURN
+
+;===============================================================================
+;               OPEN DEVICE SUBROUTINE 
+;===============================================================================
+OPENREMDEV:
+
+   ;if the fault bit is set or the interlock bit is set
+   IF (AND(DEV_PTR:DEV_DFLG,F_0) | AND(DEV_PTR:DEV_STAT,S_4)) THEN
+      BEGIN
+      IF (COMPAR(SEQ_STATUS,"FAIL",4,EQ)) THEN    ;If already in fail
+         RETURN
+      GOTO FAIL                              ;Otherwise send the program to fail
+      END
+
+   IF (AND(DEV_PTR:DEV_STAT,S_1)) THEN       ;If device is already opened
+      RETURN
+
+   PUTAUTO DEV_PTR                           ;Put device into auto
+   OPEN DEV_PTR                              ;Open device and waituntil either device opens or faults
+
+   ;Now wait for the device to open, but use this logic without
+   ;WAITUNTIL to minimize network traffic.
+   REM_LOOP_CNT = 0
+OPNREMLOOP:
+   IF (AND(DEV_PTR:DEV_DFLG,F_0) | (REM_LOOP_CNT >= 60)) THEN
+      GOTO FAIL                       ;Device failed or timed out
+   IF (AND(DEV_PTR:DEV_STAT,S_1)) THEN
+      RETURN                          ;Device opened
+   REM_LOOP_CNT = REM_LOOP_CNT + 1
+   WAIT 1
+   GOTO OPNREMLOOP
+
+   RETURN
+
+;===============================================================================
+;               C L O S E       D E V I C E     S U B R O U T I N E
+;===============================================================================
+
+   ;This subroutine will attempt to open any device that it is
+   ;commanded to. The subroutine will check for five things:
+   ;if the program is already in failure hold (DEV_FAILED)
+   ;if the device has been faulted ($f0)
+   ;if the device has been interlocked ($s4)
+   ;if the device is already closed ($s0)
+    ;if the device is in manual ($m0)
+
+CLOSDEV:
+   ;if the program is already in failure hold
+   ;and device faulted or interlocked (the cause of failure hold)
+   ;then return to the program
+   ;allowing the routine to continue will cause an infinite loop
+   IF (DEV_FAILED_FG & (AND(DEV_PTR:DEV_DFLG,F_0)|AND(DEV_PTR:DEV_STAT,S_4))) THEN
+      GOTO OUTCLS
+
+   ;if the fault bit is set, send the program to hold
+   IF (AND(DEV_PTR:DEV_DFLG,F_0)) THEN
+      GOTO FLTCLS
+
+   ;if the interlock bit is set, return to the program
+   IF (AND(DEV_PTR:DEV_STAT,S_4)) THEN
+      GOTO OUTCLS
+
+   ;if device is already closed, then return to the program
+   IF (AND(DEV_PTR:DEV_STAT,S_0)) THEN
+      GOTO OUTCLS
+   DEV_PTR:DEV_MODE = OR(DEV_PTR:DEV_MODE,M_0)     ;put device into auto
+
+   ;close device and waituntil either device closes or faults
+   CLOSE DEV_PTR
+   WAITUNTIL (AND(DEV_PTR:DEV_STAT,S_0) | AND(DEV_PTR:DEV_DFLG,F_0)) COUNT 60,FLTCLS
+
+   ;if device is faulted
+   IF (AND(DEV_PTR:DEV_DFLG,F_0)) THEN
+      BEGIN
+FLTCLS:         
+      DEV_FAILED_FG = 1                 ; set failure hold flag
+      GOTO FAIL
+      END
+OUTCLS:
+      RETURN
+
+;===============================================================================
+;               CLOSE REMOTE DEVICE SUBROUTINE 
+;===============================================================================
+CLOSREMDEV:
+
+   IF (AND(DEV_PTR:DEV_DFLG,F_0)) THEN     ;if the fault bit is set
+      BEGIN
+      IF (COMPAR(SEQ_STATUS,"FAIL",4,EQ)) THEN    ;If already in fail
+         RETURN
+      GOTO FAIL                       ;Otherwise send the program to fail
+      END
+
+   IF (AND(DEV_PTR:DEV_STAT,S_4)) THEN     ;If the interlock bit is set
+      RETURN
+
+   IF (AND(DEV_PTR:DEV_STAT,S_0)) THEN     ;If device is already closed
+      RETURN
+
+   PUTAUTO DEV_PTR                         ;Put device into auto
+   CLOSE DEV_PTR           ;Close device and waituntil either device closes or faults
+
+   ;Now wait for the device to close, but use this logic without
+   ;WAITUNTIL to minimize network traffic.
+   REM_LOOP_CNT = 0
+CLSREMLOOP:
+   IF (AND(DEV_PTR:DEV_DFLG,F_0) | (REM_LOOP_CNT >= 60)) THEN
+      GOTO FAIL                       ;Device failed or timed out
+   IF (AND(DEV_PTR:DEV_STAT,S_0)) THEN
+      RETURN                          ;Device closed
+   REM_LOOP_CNT = REM_LOOP_CNT + 1
+   WAIT 1
+   GOTO CLSREMLOOP
+
+   RETURN
+
+;*******************************************************************************
+;
+;       ERROR HANDLING SUBROUTINE
+;
+;*******************************************************************************
+;
+;       ERROR_NUM_INT:      Error number storage
+;       ERROR_LIN_INT:      Error line storage
+;
+;       This subroutine handles any error problems resulting from the
+;       execution of this program. Each error is handled in 3 different
+;       ways. If the error is insignificant, it is ignored and the program
+;       returns to resume execution. If the error is significant but not
+;       critical (valid), it is reported to printer and program continues
+;       normal execution. If it is critical the program suspends execution
+;       a message is printed to the printer, and SKD light is blinked.
+;
+;       List of specifically handled errors:
+;
+;       Error   Description                             Type
+;       -----   -----------                             ----
+;       19      program already in kick subroutine      valid
+;       32      undefined communications packet type    insignificant
+;       41      pcm db header not loaded                insignificant
+;       69      ipn not defined                         insignificant
+;       87      Holding program that is not running     critical
+;       162     no such program this pcm                insignificant
+;       165     sequence program already running        critical
+;       170     serial number mismatch                  critical
+;       179     illegal subroutine                      insignificant
+;       187     could not be remote access              insignificant
+;       193     no such program this pcm                valid
+;       198     illegal subroutine stack nesting        insignificant
+;       199     illegal recipe data file                critical
+;       200     recipe file not loaded inot memory      critical
+;       201     recipe load not enabled                 critical
+;       222     boards dead                             insignificant
+;       226     board error                             insignificant
+;       245     both pcms down                          insignificant
+
+ERRSUB:
+   ERROR_NUM_INT = ABS(ERRNUM())
+   ERROR_LIN_INT = ERRLIN()
+
+   IF (ERROR_NUM_INT = 187) THEN                               
+      FAIL_MSG = "CROSS PCM COMMUNICATION ERROR"      
+   ELSE                                                    
+      FAIL_MSG = "PROGRAM ERROR"   
+      BEGIN
+	   TEMP_INT = FLTCNV(TEMP_SG,ERROR_NUM_INT,7,0)
+		TEMP_INT = APPEND(FAIL_MSG,"ERROR ",TEMP_SG)
+		TEMP_INT = FLTCNV(TEMP_SG,ERROR_LIN_INT,7,0)
+		TEMP_INT = APPEND(FAIL_MSG,FAIL_MSG," AT LINE ",TEMP_SG)
+      END
+             
+   IF (COMPAR(SEQ_STATUS,"FAIL",4,NE)) THEN        
+      BEGIN                                   
+      ERSCLR                                  
+      GOTO FAIL                               
+      END                                     
+   SA_MESSAGE = FAIL_MSG                           
+   ERSRET
+
+#include <manlchk.inc>
+#include <fcool_dev.inc>
+;*******************************************************************************
+        NOP
+        END
+

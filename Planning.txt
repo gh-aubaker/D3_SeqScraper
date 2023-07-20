@@ -1,0 +1,14 @@
+Things to do:
+-------------------------------------------------------------------------------------------------------------------------
+	- Scrape JSON file
+	- Scrape SEQ files
+
+How to approac each:
+-------------------------------------------------------------------------------------------------------------------------
+Scrape JSON
+	- learn how to read JSON files
+	- look for program name: it is the samll name before the path
+	- look for PCM numbers: these are the headers that hold all the program names between "{...}"
+	- come up with a way to showcase findings
+		- use a dictonary to have a PCM number be the key and the values be an array of the program names
+		- output will consist of: X num of rows == X num of columns
