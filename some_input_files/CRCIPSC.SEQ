@@ -1,0 +1,380 @@
+;******************************************************************************
+;*                                                                            
+;*                                                                            
+;*      PROGRAM NAME:   COMMON/SABL/CRCIPC.SEQ             
+;*                                                                            
+;*                                                                            
+;*                                                                            
+;*      PROJECT NAME:   MILLER BREWING, TRENTON,OH                            
+;*      PROJECT NUM :   TI 48608 CO                                           
+;*      PCM NUMBER  :   PCM1                                                  
+;*      WRITTEN BY  :   Robert M. Ard
+;*      DATE        :   November 2006                                               
+;*                                                                            
+;*                                                                            
+;*      MODIFICATION LOG        modifications made prior to 4/27/93 reflect   
+;*                              changes done to original bksc3.seq            
+;*                                                                            
+;	DATE			PATCH ID		DESCRIPTION
+;	----			--------		-----------
+;	27Nov2006	rma000		initial release 
+;	16/DEC/12 VCM047  Changes for grant removal
+;
+;******************************************************************************
+;
+;******************************************************************************
+;
+;       PROGRAM FUNCTION:
+;       ----------------
+;       Monitor the Caustic Circulate graphic for commands issued by the 
+;       operator and the CIP caustic brew start flag.
+;
+;
+;       SUBROUTINES REFERENCED:         
+;       ----------------------
+;
+;
+;
+;       REFERENCE DOCUMENTS:
+;       -------------------
+;
+;
+;
+;*******************************************************************************
+;
+;
+;       DEFINE UNITS
+;       ------------
+;
+	UNIT    BKCOM1                           
+	COMMON  ALLOF0,ALLOF1,ALLOF2,CIPCOM
+	RUNIT BKCOM2
+
+#include <allof1_upf.h>
+#include <allof2_upf.h>
+#include <cipcom_upf.h>
+#include <constants.h>
+#include <allof1_epn.h>
+#include <allof2_epn.h>
+#include <bkcom_upf.h>
+;
+;*******************************************************************************
+;*******************************************************************************
+;
+;               SET ERROR SUBROUTINES
+;
+;*******************************************************************************
+
+	ON ERROR GOSUB ERRSUB           ;define error handling routine
+
+;*******************************************************************************
+;*******************************************************************************
+;		M A I N
+;*******************************************************************************
+;*******************************************************************************
+MAIN:
+	GOSUB SCINIT		;Initialize program
+
+MAINLOOP:
+	GOSUB RUNSAPRGM			;Insure sa program running
+	GOSUB SAPRGMCHK			;Check sa program trapped/paused
+	GOSUB HOLDCMD				;Hold command
+	GOSUB CONTCMD				;Continue command
+	GOSUB ATNSCMD				;Advance to next step command
+	GOSUB CRESTOPCMD			;CIP command
+	GOSUB MSGCLR				;Clear sc msg & step tmr
+	WAIT 1
+	GOTO MAINLOOP
+
+
+;*******************************************************************************
+;*******************************************************************************
+;		S U B R O U T I N E S
+;*******************************************************************************
+;*******************************************************************************
+;
+;===============================================================================
+;		PROGRAM INITIALIZATION (STANDARD SHELL SUBROUTINE)
+;===============================================================================
+SCINIT:
+	HOLD_CMD = 0				;Clear operator commands
+	CONT_CMD = 0
+	ATNS_CMD = 0
+
+	TIMERCLR SC_MSG_TMR			;Clear sc message timer
+	TIMERON SC_MSG_TMR			;Turnon sc message timer
+	SC_MSG_TIME = 20			;Sc message time (sec)
+	TMO_DELAY = 30
+	HWT_LOW_LVL = 2.0
+	SC_MESSAGE = "SC PRGM STARTED"
+
+	IF (ALREADY_INITIALIZED_FG) THEN	;If already initialized
+		RETURN
+
+
+	GETUNIT UNIT_NUMBER,UNIT_SG 
+
+	IF COMPAR(UNIT_SG,"BKCOM1",6,EQ) THEN
+		BEGIN
+		LAMP_NUMBER = 7
+		LAMP_ADI = 1
+		ASSIGN SA_STATUS_PTR = CRCIP_SA_STATUS_ALLOF1
+		ASSIGN SEQ_STATUS_PTR = CRCIP_SEQ_STATUS_ALLOF1
+		ASSIGN SA_STATE_PTR = CRCIP_SA_STATE_ALLOF1
+		ASSIGN CR_CIP_RUN_PTR = CR1_CIP_RUN_CIPCOM
+		ASSIGN CR_CAUSTIC_BREW_PTR = CR1_CAUSTIC_BREW_CIPCOM
+		ASSIGN CR_ESTOP_PTR = CR1_ESTOP_CIPCOM
+		ASSIGN CRCIP_PHENO_RESPONSE_PTR = CRCIP_PHENO_SG_ALLOF1
+      ASSIGN CR_ENA_ALLOF_PTR = CR_ENA_ALLOF1 ;VCMHHH
+		ASSIGN FIRSTBK_SA_STATUS_PTR = BK1_SA_STATUS_ALLOF1	;sa status ptr
+		ASSIGN FIRSTBK_SEQ_STATUS_PTR = BK1_SEQ_STATUS_ALLOF1	;seq status ptr
+		ASSIGN FIRSTBK_STATUS_DEVICE_PTR = '8204V1'
+		ASSIGN FIRSTBK_LEVEL_PTR = '8204LI11'
+		ASSIGN FIRSTBK_EMPTY_FG_PTR = BK1_CRCIP_EMPTY_FG_ALLOF1
+		ASSIGN CRCIP_FIRSTBK_ADV_STEP_CMD_PTR = CRCIP_BK1_ADV_STEP_CMD_ALLOF1
+
+		ASSIGN SECONDBK_SA_STATUS_PTR = BK2_SA_STATUS_ALLOF1	;sa status ptr
+		ASSIGN SECONDBK_SEQ_STATUS_PTR = BK2_SEQ_STATUS_ALLOF1	;seq status ptr
+		ASSIGN SECONDBK_STATUS_DEVICE_PTR = '8204V2'
+		ASSIGN SECONDBK_LEVEL_PTR = '8204LI21'
+		ASSIGN SECONDBK_EMPTY_FG_PTR = BK2_CRCIP_EMPTY_FG_ALLOF1
+		ASSIGN CRCIP_SECONDBK_ADV_STEP_CMD_PTR = CRCIP_BK2_ADV_STEP_CMD_ALLOF1
+
+		ASSIGN HWT_SEQ_STATUS_PTR = HWTK1_SEQ_STATUS_ALLOF1
+		ASSIGN HWT_SA_STATUS_PTR = HWTK1_SA_STATUS_ALLOF1
+		ASSIGN HWT_LEVEL_PTR = HWT1_LEVEL
+   	ASSIGN HWT_STATUS_DEVICE_PTR = HWT1_STATUS_DEVICE							;8212T1
+
+		ASSIGN CC_STATUS_DEVICE_PTR = CC1_STATUS_DEVICE								;8201V1
+		ASSIGN MM_STATUS_DEVICE_PTR = MM1_STATUS_DEVICE								;8202V1
+		ASSIGN LTUN_STATUS_DEVICE_PTR = LTUN1_STATUS_DEVICE						;8203T1
+		ASSIGN WC_STATUS_DEVICE_PTR = WC1_STATUS_DEVICE								;8215X1
+		ASSIGN SPENT_GRAIN_STATUS_DEVICE_PTR = SPENT_GRAIN1_STATUS_DEVICE		;8240T1
+
+		ASSIGN CSS_LT_MASHLINE_HV_PTR = '8203HV19'	;or 8203HV29 line 2
+		ASSIGN TRUB_TO_LTUN_HV_PTR = '8203HV13'			;or 8203HV23 line 2
+
+		ASSIGN BRWHSE_CIP_END_TIM_PTR = BRWHSE_CIP_END_TIME_ALLOF1              
+		ASSIGN BRWHSE_CIP_PHENO_RESULT_PTR = BRWHSE_CIP_PHENO_RESULT_ALLOF1     
+		ASSIGN BRWHSE_CIP_VESSEL_CLND_PTR = BRWHSE_CIP_VESSEL_CLND_ALLOF1       
+		ASSIGN BRWHSE_CIP_DATE_PTR = BRWHSE_CIP_DATE_ALLOF1                     
+		ASSIGN BRWHSE_CIP_START_TIME_PTR = BRWHSE_CIP_START_TIME_ALLOF1         
+		ASSIGN BRWHSE_CIP_TYPE_PTR = BRWHSE_CIP_TYPE_ALLOF1                     
+		ASSIGN BRWHSE_CIP_CAUSTIC_STRENGTH_PTR = BRWHSE_CIP_CAUSTIC_STRENGTH_ALLOF1    
+		END
+
+	IF COMPAR(UNIT_SG,"BKCOM2",6,EQ) THEN
+		BEGIN
+		LAMP_NUMBER = 43
+		LAMP_ADI = 1
+		ASSIGN SA_STATUS_PTR = CRCIP_SA_STATUS_ALLOF2
+		ASSIGN SEQ_STATUS_PTR = CRCIP_SEQ_STATUS_ALLOF2
+		ASSIGN SA_STATE_PTR = CRCIP_SA_STATE_ALLOF2
+		ASSIGN CR_CIP_RUN_PTR = CR2_CIP_RUN_CIPCOM
+		ASSIGN CR_CAUSTIC_BREW_PTR = CR2_CAUSTIC_BREW_CIPCOM
+		ASSIGN CR_ESTOP_PTR = CR2_ESTOP_CIPCOM
+		ASSIGN CRCIP_PHENO_RESPONSE_PTR = CRCIP_PHENO_SG_ALLOF2
+      ASSIGN CR_ENA_ALLOF_PTR = CR_ENA_ALLOF2 ;VCMHHH
+
+		ASSIGN FIRSTBK_SA_STATUS_PTR = BK3_SA_STATUS_ALLOF2	;sa status ptr
+		ASSIGN FIRSTBK_SEQ_STATUS_PTR = BK3_SEQ_STATUS_ALLOF2	;seq status ptr
+		ASSIGN FIRSTBK_STATUS_DEVICE_PTR = '8204V3'
+		ASSIGN FIRSTBK_LEVEL_PTR = '8204LI31'
+		ASSIGN FIRSTBK_EMPTY_FG_PTR = BK3_CRCIP_EMPTY_FG_ALLOF2
+		ASSIGN CRCIP_FIRSTBK_ADV_STEP_CMD_PTR = CRCIP_BK3_ADV_STEP_CMD_ALLOF2
+
+		ASSIGN SECONDBK_SA_STATUS_PTR = BK4_SA_STATUS_ALLOF2	;sa status ptr
+		ASSIGN SECONDBK_SEQ_STATUS_PTR = BK4_SEQ_STATUS_ALLOF2	;seq status ptr
+		ASSIGN SECONDBK_STATUS_DEVICE_PTR = '8204V4'
+		ASSIGN SECONDBK_LEVEL_PTR = '8204LI41'
+		ASSIGN SECONDBK_EMPTY_FG_PTR = BK4_CRCIP_EMPTY_FG_ALLOF2
+		ASSIGN CRCIP_SECONDBK_ADV_STEP_CMD_PTR = CRCIP_BK4_ADV_STEP_CMD_ALLOF2
+
+		ASSIGN HWT_SEQ_STATUS_PTR = HWTK2_SEQ_STATUS_ALLOF2
+		ASSIGN HWT_SA_STATUS_PTR = HWTK2_SA_STATUS_ALLOF2
+		ASSIGN HWT_LEVEL_PTR = HWT2_LEVEL
+   	ASSIGN HWT_STATUS_DEVICE_PTR = HWT2_STATUS_DEVICE							;8212T1
+
+		ASSIGN CC_STATUS_DEVICE_PTR = CC2_STATUS_DEVICE								;8201V1
+		ASSIGN MM_STATUS_DEVICE_PTR = MM2_STATUS_DEVICE								;8202V1
+		ASSIGN LTUN_STATUS_DEVICE_PTR = LTUN2_STATUS_DEVICE						;8203T1
+		ASSIGN WC_STATUS_DEVICE_PTR = WC2_STATUS_DEVICE								;8215X1
+		ASSIGN SPENT_GRAIN_STATUS_DEVICE_PTR = SPENT_GRAIN2_STATUS_DEVICE		;8240T1
+ 
+		ASSIGN BRWHSE_CIP_END_TIM_PTR = BRWHSE_CIP_END_TIME_ALLOF2              
+		ASSIGN BRWHSE_CIP_PHENO_RESULT_PTR = BRWHSE_CIP_PHENO_RESULT_ALLOF2     
+		ASSIGN BRWHSE_CIP_VESSEL_CLND_PTR = BRWHSE_CIP_VESSEL_CLND_ALLOF2       
+		ASSIGN BRWHSE_CIP_DATE_PTR = BRWHSE_CIP_DATE_ALLOF2                     
+		ASSIGN BRWHSE_CIP_START_TIME_PTR = BRWHSE_CIP_START_TIME_ALLOF2         
+		ASSIGN BRWHSE_CIP_TYPE_PTR = BRWHSE_CIP_TYPE_ALLOF2                     
+		ASSIGN BRWHSE_CIP_CAUSTIC_STRENGTH_PTR = BRWHSE_CIP_CAUSTIC_STRENGTH_ALLOF2   
+
+		END
+
+	ALREADY_INITIALIZED_FG = 1         ; already ran, goto main
+
+	RETURN
+
+;===============================================================================
+;		RUN SA PROGRAM 
+;===============================================================================
+RUNSAPRGM:
+
+	IF (CR_CAUSTIC_BREW_PTR) & (PGMSTAT("CRCIPSA") = NOT_RUNNING) THEN
+		BEGIN
+		IF (SA_STATE_PTR > 1) THEN
+			BEGIN
+			PRINT LOG_ADI,"RESTARTING CRCIPSA PROGRAM"
+			SC_MESSAGE = "RESTARTING CRCIPSA PGM"
+			END
+		ELSE 
+			BEGIN
+			PRINT LOG_ADI,"STARTING CRCIPSA PROGRAM"
+			SC_MESSAGE = "STARTING CRCIPSA PGM"
+			END
+		RUN "CRCIPSA" 
+		WAITUNTIL (PGMSTAT("CRCIPSA") != NOT_RUNNING) COUNT TMO_DELAY, STARTCRFAIL 
+		END
+	ELSE IF (!CR_CAUSTIC_BREW_PTR) & (PGMSTAT("CRCIPSA") = NOT_RUNNING) THEN
+		SA_STATUS_PTR = "IDLE"
+	
+	RETURN
+
+STARTCRFAIL:
+	SC_MESSAGE = "CRCIPSA PGM FAILED TO START"
+	PRINT LOG_ADI,"CRCIPSA PGM FAILED TO START"
+
+	RETURN
+
+;===============================================================================
+;		SA PROGRAM TRAPPED/PAUSED CHECK 
+;===============================================================================
+SAPRGMCHK:
+
+	IF (!CR_CAUSTIC_BREW_PTR)&(PGMSTAT("CRCIPSA") = NOT_RUNNING)&(LAST_SKID_COLOR != BLACK) THEN
+			BEGIN
+			SKID_COLOR = BLACK				;If not already this color
+			GOSUB SKID
+			END
+
+	SC_EX1_FG = (CR_CAUSTIC_BREW_PTR)
+	IF (SC_EX1_FG & AND(PGMSTAT("CRCIPSA"),TRAPPED)) THEN	;If sa prgm trapped
+		BEGIN
+		SC_MESSAGE = "SA PRGM IS TRAPPED"
+		TIMERCLR SC_MSG_TMR			;Clear sc message timer
+		SKID_COLOR = RED				;If not already this color
+		GOSUB SKID						;light skid
+		END
+	ELSE IF (SC_EX1_FG & !AND(PGMSTAT("CRCIPSA"),NOT_PAUSED)) THEN  ;If sa prgm paused
+		BEGIN
+		SC_MESSAGE = "SA PRGM IS PAUSED"
+		TIMERCLR SC_MSG_TMR			;Clear sc message timer
+		SKID_COLOR = RED				;If not already this color
+		GOSUB SKID						;light skid
+		END
+
+
+	RETURN
+
+;===============================================================================
+;		CONTINUE (STANDARD SHELL SUBROUTINE)
+;===============================================================================
+CONTCMD:
+	IF (CONT_CMD) THEN	;Check cmd from operator
+		BEGIN
+		SC_EX1_FG = COMPAR(SEQ_STATUS_PTR,"HOLD",4,NE) & COMPAR(SEQ_STATUS_PTR,"FAIL",4,NE)
+		SC_EX2_FG = COMPAR(SA_STATUS_PTR,"SETUP CHECK",11,NE) 
+		IF (PGMSTAT("CRCIPSA") = NOT_RUNNING) THEN
+			SC_MESSAGE = "INVALID - SA PRGM NOT RUNNING"
+		ELSE IF (SC_EX1_FG & SC_EX2_FG) THEN
+			SC_MESSAGE = "SEQ NOT IN HOLD/FAIL/SETUP CHK"
+		ELSE
+			BEGIN
+			SC_SA_CONT_CMD =1	;Set sc sa cmd
+			SC_MESSAGE = "CONTINUE CMD ACCEPTED"
+			PRINT LOG_ADI,"%p ",SC_MESSAGE
+			END
+		TIMERCLR SC_MSG_TMR		;Clear sc message timer
+		CONT_CMD = 0			;Clear cmd from operator
+		END
+	RETURN
+
+;===============================================================================
+;		HOLD
+;===============================================================================
+HOLDCMD:
+	IF (HOLD_CMD) THEN	;Check cmd from operator
+		BEGIN 
+		IF (PGMSTAT("CRCIPSA") = NOT_RUNNING) THEN
+			SC_MESSAGE = "INVALID - SA PRGM NOT RUNNING"
+		ELSE IF (COMPAR(SEQ_STATUS_PTR,"HOLD",4,EQ)) THEN
+			SC_MESSAGE = "INVALID - SEQ IN HOLD"
+		ELSE
+			BEGIN
+			IF (PGMSTAT("CRCIPSA") != NOT_RUNNING) THEN
+				HOLD "CRCIPSA"											;Interrupt sa program
+			PRINT LOG_ADI,"HOLD CRCIPSA PRGM BY HOLD CMD"
+			SC_MESSAGE = "HOLD CMD ACCEPTED"
+			PRINT LOG_ADI,"%p", SC_MESSAGE
+			END
+		TIMERCLR SC_MSG_TMR		;Clear sc message timer
+		HOLD_CMD = 0			;Clear cmd from operator
+		END
+	RETURN
+
+;===============================================================================
+;		ATNS (Advance To Next Step) (STANDARD SHELL SUBROUTINE)
+;===============================================================================
+ATNSCMD:
+
+	SC_EX1_FG = (COMPAR(SEQ_STATUS_PTR,"HOLD",4,NE))
+	SC_EX2_FG = (COMPAR(SEQ_STATUS_PTR,"FAIL",4,NE))
+
+	IF (ATNS_CMD) THEN	;Check cmd from operator
+		BEGIN
+		IF (PGMSTAT("CRCIPSA") = NOT_RUNNING) THEN
+			SC_MESSAGE = "INVALID - SA PRGM NOT RUNNING"
+		ELSE IF (SC_EX1_FG & SC_EX2_FG) THEN
+			SC_MESSAGE = "SEQUENCE MUST BE HELD/FAILED"
+		ELSE
+			BEGIN
+			SC_SA_ATNS_CMD = 1	;Set sc sa cmd
+			IF INSTR(UNIT_SG,"BKCOM1") THEN
+				CRCIP_BK_ATNS_CMD_ALLOF1 = 1
+			ELSE CRCIP_BK_ATNS_CMD_ALLOF2 = 1
+			SC_MESSAGE = "ATNS CMD ACCEPTED"
+			PRINT LOG_ADI,"%p ",SC_MESSAGE
+			END
+		TIMERCLR SC_MSG_TMR		;Clear sc message timer
+		ATNS_CMD = 0			;Clear cmd from operator
+		END
+	RETURN
+
+;===============================================================================
+;		CR CIP ESTOP ISSUED FROM CIP
+;===============================================================================
+CRESTOPCMD:
+
+
+	IF (CR_ESTOP_PTR = 1)& (PGMSTAT("CRCIPSA") != NOT_RUNNING) THEN		;issued from CIP delivery rmaqqq
+		BEGIN                       
+		IF COMPAR(SEQ_STATUS_PTR,"HOLD",4,NE) & COMPAR(SEQ_STATUS_PTR,"FAIL",4,NE) THEN
+			BEGIN
+			PRINT LOG_ADI, "ESTOP CRCIPSA PROGRAM"
+			HOLD "CRCIPSA"
+			WAIT 2
+			END
+		END
+
+	RETURN
+
+
+
+#include <skid.inc>
+#include <sc_msgclr.inc>
+#include <sc_errsub.inc>
+;*******************************************************************************
+	NOP
+	END
+
+

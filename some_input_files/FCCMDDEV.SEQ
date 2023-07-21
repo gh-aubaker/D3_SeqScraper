@@ -1,0 +1,892 @@
+;******************************************************************************
+;*
+;*									              
+;*	PROGRAM NAME:	D3APP\SETUP\COMMON\SABL\FCCMDDEV.SEQ
+;*
+;*				
+;*	PROJECT NAME:	MILLER BREWING, TRENTON, OH
+;*	PROJECT NUM :			
+;*	PCM NUMBER  :	PCM4
+;*	WRITTEN BY  :	
+;*	DATE	      :	NOVEMBER 9, 2005
+;*
+;******************************************************************************
+;
+;	MODIFICATION LOG
+;
+;	DATE		PATCH ID	DESCRIPTION
+;	----		---------	-----------
+;	20-OCT-2015	JMS004		Removed Eductor valves and flow switch
+;	01-sep-2019	jaz001		Update Fass Cooler valves for single Pass
+;	23-Oct-2019	jaz002		Add CFG11, update valves for CFG9/10
+;
+;*******************************************************************************
+;
+;       PROGRAM FUNCTION:       This program performs the device
+;       ----------------        control for the fass cooler CIP system
+;
+;
+;*******************************************************************************
+;
+;       DEFINE UNITS
+;       ------------
+
+   UNIT PRIM1
+;/*jaz001   COMMON CFGCM,ALLOF4,CIP90COM,CIP901	/**/
+   COMMON CFGCM,ALLOF4,CIP90COM,CIP901,ALLOF8 	/*jaz001*/
+   RUNIT PRIM2
+
+#include <fcool_unit.h>		   /* Unit, variable & epn definitions */
+
+;*******************************************************************************
+;		SET ERROR SUBROUTINES
+;*******************************************************************************
+
+	ON ERROR GOSUB ERRSUB		;define error handling routine
+
+
+;*******************************************************************************
+;*******************************************************************************
+;		M A I N
+;*******************************************************************************
+;*******************************************************************************
+MAIN:
+
+	IF (COMPAR(SEQ_STATUS,"HOLD",4,EQ)) | (COMPAR(SEQ_STATUS,"FAIL",4,EQ)) THEN
+		GOSUB ALHF
+	ELSE
+		ON SA_STATE GOSUB AL1,AL2,AL3,AL4,AL5,AL6,AL7,AL8,AL9,AL10
+
+	CMD_SA_STATUS = 1		               ;Run command devices status = OK
+	EXIT				                     ;Successful exit
+
+FAIL:
+	CMD_SA_STATUS = 2		               ;Run command devices status = FAILED
+	EXIT				                     ;Failure
+
+;*******************************************************************************
+;*******************************************************************************
+;		S U B R O U T I N E S
+;*******************************************************************************
+;*******************************************************************************
+;=============================================================================
+;		SYSTEM OFF
+;=============================================================================
+AL1:
+
+   GOSUB CLRINTERLOCK                           ;Clear CIP interlocks
+ 
+   GOSUB CLEARSEQAUTO                                 ;Clear sequence auto bit
+   GOSUB CLSSEATLIFTERS                               ;Close seat lifters
+
+   ;Valves in PCM4
+	IF (INSTR(CFT_FCOOL_CIP90_RESERVE_SG_ALLOF4,UNIT_SG)) THEN
+      GOSUB CLSCIP90CFTFCOOLCSSVLV                         ;8400XV107
+   GOSUB CLSFCOOLCSSVLV                               ;8627XV1221/8627XV1222
+   GOSUB CLSFCOOLDILUENTVLV                           ;8627XV1121/8627XV1122      
+   GOSUB CLSFCOOLOUTLTVLV                             ;8632XV11 (PCM4),8632XV21 (PCM8) 
+
+   ;CIP Valves in PCM6
+	GOSUB CLSCIP90CSSSUPPYPMP			                  ;8236P3
+	PUTMANL CSS_SUPPLY_FLOW_CTRL_VLV                   ;8236FC1
+	PUTOUT CSS_SUPPLY_FLOW_CTRL_VLV,MIN_OUT
+	GOSUB CLSCIP90ACIDRECLAIMVLV			               ;8230XV303
+	GOSUB CLSCIP90CSSRELEASEVLV			               ;8236XV304
+	GOSUB CLSCIP90ACIDCSSBLDBLKVLV			            ;8230BB304
+	GOSUB CLSCIP90STRAINERINLTVLV			               ;8230XV301
+   GOSUB CLSCIP90STRAINERBYPASSVLV			            ;8230XV302
+;JMS004	GOSUB CLSCIP90CHLORINEVLV			                  ;8238XV101
+	GOSUB CLSCIP90CSSSUPPLYVLV			                  ;8236XV305
+	GOSUB CLSCIP90AMBIENTWTRBLDBLKVLV	               ;8230BB316
+	GOSUB CLSCIP90CSSBLDBLKVLV			                  ;8230BB401
+
+   RETURN
+
+;=============================================================================
+;		SETUP CHECK
+;=============================================================================
+AL2:
+
+   GOSUB SETINTERLOCK                           ;set CIP interlocks
+
+   GOSUB CLEARSEQAUTO                                 ;Clear sequence auto bit
+   GOSUB CLSSEATLIFTERS                               ;Close seat lifters
+
+   ;Valves in PCM4
+	IF (INSTR(CFT_FCOOL_CIP90_RESERVE_SG_ALLOF4,UNIT_SG)) THEN
+      GOSUB CLSCIP90CFTFCOOLCSSVLV                         ;8400XV107
+
+   GOSUB CLSFCOOLCSSVLV                               ;8627XV1221/8627XV1222
+   GOSUB CLSFCOOLDILUENTVLV                           ;8627XV1121/8627XV1122      
+   GOSUB CLSFCOOLOUTLTVLV                             ;8632XV11 (PCM4),8632XV21 (PCM8)       
+
+   ;CIP Valves in PCM6
+	GOSUB CLSCIP90CSSSUPPYPMP			                  ;8236P3
+	PUTMANL CSS_SUPPLY_FLOW_CTRL_VLV                   ;8236FC1
+	PUTOUT CSS_SUPPLY_FLOW_CTRL_VLV,MIN_OUT
+	GOSUB CLSCIP90ACIDRECLAIMVLV			               ;8230XV303
+	GOSUB CLSCIP90CSSRELEASEVLV			               ;8236XV304
+	GOSUB CLSCIP90ACIDCSSBLDBLKVLV			            ;8230BB304
+	GOSUB CLSCIP90STRAINERINLTVLV			               ;8230XV301
+   GOSUB CLSCIP90STRAINERBYPASSVLV			            ;8230XV302
+;JMS004	GOSUB CLSCIP90CHLORINEVLV			                  ;8238XV101
+	GOSUB CLSCIP90CSSSUPPLYVLV			                  ;8236XV305
+	GOSUB CLSCIP90AMBIENTWTRBLDBLKVLV	               ;8230BB316        
+	GOSUB CLSCIP90CSSBLDBLKVLV			                  ;8230BB401             
+ 
+   RETURN
+
+;=============================================================================
+;		PRERINSE
+;=============================================================================
+AL3:
+
+   GOSUB SETINTERLOCK                           ;set CIP interlocks
+
+   GOSUB OPNSEATLIFTERS                               ;Open seat lifters
+   GOSUB SETSEQAUTO                                   ;Set sequence auto bit
+
+   PUTMANL CSS_SUPPLY_FLOW_CTRL_VLV                   ;8236FC1
+   PUTOUT CSS_SUPPLY_FLOW_CTRL_VLV,CSS_VLV_OUT
+
+   ;Valves in PCM4
+	IF (INSTR(CFT_FCOOL_CIP90_RESERVE_SG_ALLOF4,UNIT_SG)) THEN
+      GOSUB OPNCIP90CFTFCOOLCSSVLV                         ;8400XV107
+
+   GOSUB OPNFCOOLCSSVLV                               ;8627XV1221/8627XV1222
+   GOSUB CLSFCOOLDILUENTVLV                           ;8627XV1121/8627XV1122      
+   GOSUB OPNFCOOLOUTLTVLV                             ;8632XV11 (PCM4),8632XV21 (PCM8)       
+
+   ;CIP Valves in PCM6
+	GOSUB CLSCIP90CSSSUPPYPMP			                  ;8236P3            
+   GOSUB OPNCIP90STRAINERBYPASSVLV			            ;8230XV302
+	GOSUB OPNCIP90CSSSUPPLYVLV			                  ;8236XV305
+	PUTMANL CSS_SUPPLY_FLOW_CTRL_VLV                   ;8236FC1
+	PUTOUT CSS_SUPPLY_FLOW_CTRL_VLV,MID_OUT           
+	GOSUB OPNCIP90AMBIENTWTRBLDBLKVLV	               ;8230BB316
+	GOSUB CLSCIP90ACIDRECLAIMVLV			               ;8230XV303
+	GOSUB CLSCIP90CSSRELEASEVLV			               ;8236XV304
+	GOSUB CLSCIP90ACIDCSSBLDBLKVLV			            ;8230BB304
+	GOSUB CLSCIP90STRAINERINLTVLV			               ;8230XV301
+;JMS004	GOSUB CLSCIP90CHLORINEVLV			                  ;8238XV101
+	GOSUB CLSCIP90CSSBLDBLKVLV			                  ;8230BB401
+	WAIT PUMP_DELAY_STIME
+	GOSUB OPNCIP90CSSSUPPYPMP			                  ;8236P3
+
+   PUTAUTO CSS_SUPPLY_FLOW_CTRL_VLV                   ;8236FC1
+   CSS_SUPPLY_FLOW_CTRL_VLV:PID_SPVL:1 = CSS_AUTO_SETPT
+
+   RETURN
+
+
+;=============================================================================
+;		CAUSTIC CLEAN
+;=============================================================================
+AL4:
+
+   GOSUB SETINTERLOCK                           ;set CIP interlocks
+
+   GOSUB OPNSEATLIFTERS                               ;Open seat lifters
+   GOSUB SETSEQAUTO                                   ;Set sequence auto bit
+
+   PUTMANL CSS_SUPPLY_FLOW_CTRL_VLV                   ;8236FC1
+   PUTOUT CSS_SUPPLY_FLOW_CTRL_VLV,CSS_VLV_OUT
+
+   ;Valves in PCM4
+	IF (INSTR(CFT_FCOOL_CIP90_RESERVE_SG_ALLOF4,UNIT_SG)) THEN
+      GOSUB OPNCIP90CFTFCOOLCSSVLV                         ;8400XV107
+
+   GOSUB OPNFCOOLCSSVLV                               ;8627XV1221/8627XV1222
+   GOSUB CLSFCOOLDILUENTVLV                           ;8627XV1121/8627XV1122      
+   GOSUB OPNFCOOLOUTLTVLV                             ;8632XV11 (PCM4),8632XV21 (PCM8)       
+
+   ;CIP Valves in PCM6
+	GOSUB CLSCIP90CSSSUPPYPMP			                  ;8236P3
+	GOSUB CLSCIP90AMBIENTWTRBLDBLKVLV			         ;8230BB316
+   GOSUB OPNCIP90STRAINERBYPASSVLV			            ;8230XV302             
+	GOSUB OPNCIP90CSSSUPPLYVLV			                  ;8236XV305
+	GOSUB OPNCIP90STRAINERINLTVLV			               ;8230XV301
+	PUTMANL CSS_SUPPLY_FLOW_CTRL_VLV                   ;8236FC1
+	PUTOUT CSS_SUPPLY_FLOW_CTRL_VLV,MID_OUT
+	GOSUB OPNCIP90CSSBLDBLKVLV			                  ;8230BB401
+	GOSUB CLSCIP90ACIDRECLAIMVLV			               ;8230XV303
+	GOSUB CLSCIP90CSSRELEASEVLV			               ;8236XV304
+	GOSUB CLSCIP90ACIDCSSBLDBLKVLV			            ;8230BB304
+;JMS004	GOSUB CLSCIP90CHLORINEVLV			                  ;8238XV101
+	WAIT PUMP_DELAY_STIME
+	GOSUB OPNCIP90CSSSUPPYPMP			                  ;8236P3
+	TIMERON CSR_FLOW_DET_TMR
+
+   PUTAUTO CSS_SUPPLY_FLOW_CTRL_VLV                   ;8236FC1
+   CSS_SUPPLY_FLOW_CTRL_VLV:PID_SPVL:1 = CSS_AUTO_SETPT
+
+   RETURN
+
+
+;=============================================================================
+;		FIRST RINSE
+;=============================================================================
+AL5:
+
+   GOSUB SETINTERLOCK                           ;set CIP interlocks
+
+   GOSUB OPNSEATLIFTERS                               ;Open seat lifters
+   GOSUB SETSEQAUTO                                   ;Set sequence auto bit
+
+   PUTMANL CSS_SUPPLY_FLOW_CTRL_VLV                   ;8236FC1
+   PUTOUT CSS_SUPPLY_FLOW_CTRL_VLV,CSS_VLV_OUT
+
+   ;Valves in PCM4
+	IF (INSTR(CFT_FCOOL_CIP90_RESERVE_SG_ALLOF4,UNIT_SG)) THEN
+      GOSUB OPNCIP90CFTFCOOLCSSVLV                         ;8400XV107
+
+   GOSUB OPNFCOOLCSSVLV                               ;8627XV1221/8627XV1222
+   GOSUB CLSFCOOLDILUENTVLV                           ;8627XV1121/8627XV1122      
+   GOSUB OPNFCOOLOUTLTVLV                             ;8632XV11 (PCM4),8632XV21 (PCM8)       
+
+   ;CIP Valves in PCM6
+	GOSUB CLSCIP90CSSSUPPYPMP			                  ;8236P3
+;JMS004   GOSUB CLSCIP90CHLORINEVLV			                  ;8238XV101
+	GOSUB CLSCIP90CSSBLDBLKVLV			                  ;8230BB401
+	GOSUB CLSCIP90STRAINERINLTVLV			               ;8230XV301               
+   GOSUB OPNCIP90STRAINERBYPASSVLV			            ;8230XV302
+	GOSUB OPNCIP90CSSSUPPLYVLV			                  ;8236XV305
+	GOSUB OPNCIP90AMBIENTWTRBLDBLKVLV			         ;8230BB316
+	GOSUB CLSCIP90ACIDRECLAIMVLV			               ;8230XV303
+	GOSUB CLSCIP90CSSRELEASEVLV			               ;8236XV304
+	GOSUB CLSCIP90ACIDCSSBLDBLKVLV			            ;8230BB304
+	WAIT PUMP_DELAY_STIME
+	GOSUB OPNCIP90CSSSUPPYPMP			                  ;8236P3
+	TIMERON CSR_FLOW_DET_TMR
+
+   PUTAUTO CSS_SUPPLY_FLOW_CTRL_VLV                   ;8236FC1
+   CSS_SUPPLY_FLOW_CTRL_VLV:PID_SPVL:1 = CSS_AUTO_SETPT
+
+   RETURN
+
+
+;=============================================================================
+;		CHLORINE RINSE
+;=============================================================================
+AL6:
+
+   GOSUB SETINTERLOCK                           ;set CIP interlocks
+
+   GOSUB OPNSEATLIFTERS                               ;Open seat lifters
+   GOSUB SETSEQAUTO                                   ;Set sequence auto bit
+
+   PUTMANL CSS_SUPPLY_FLOW_CTRL_VLV                   ;8236FC1
+   PUTOUT CSS_SUPPLY_FLOW_CTRL_VLV,CSS_VLV_OUT
+
+   ;Valves in PCM4
+	IF (INSTR(CFT_FCOOL_CIP90_RESERVE_SG_ALLOF4,UNIT_SG)) THEN
+      GOSUB OPNCIP90CFTFCOOLCSSVLV                         ;8400XV107
+
+   GOSUB OPNFCOOLCSSVLV                               ;8627XV1221/8627XV1222
+   GOSUB CLSFCOOLDILUENTVLV                           ;8627XV1121/8627XV1122      
+   GOSUB OPNFCOOLOUTLTVLV                             ;8632XV11 (PCM4),8632XV21 (PCM8)       
+
+   ;CIP Valves in PCM6
+	GOSUB CLSCIP90CSSSUPPYPMP			                  ;8236P3
+	GOSUB CLSCIP90CSSBLDBLKVLV			                  ;8230BB401
+	GOSUB CLSCIP90STRAINERINLTVLV			               ;8230XV301               
+   GOSUB OPNCIP90STRAINERBYPASSVLV			            ;8230XV302
+	GOSUB OPNCIP90CSSSUPPLYVLV			                  ;8236XV305
+	PUTMANL CSS_SUPPLY_FLOW_CTRL_VLV                   ;8236FC1
+	PUTOUT CSS_SUPPLY_FLOW_CTRL_VLV,MID_OUT
+	GOSUB OPNCIP90AMBIENTWTRBLDBLKVLV			         ;8230BB316
+	GOSUB CLSCIP90ACIDRECLAIMVLV			               ;8230XV303
+	GOSUB CLSCIP90CSSRELEASEVLV			               ;8236XV304
+	GOSUB CLSCIP90ACIDCSSBLDBLKVLV			            ;8230BB304
+;JMS004	IF (FC_CLO2_ENABLE_FG = 0) THEN    ;VCM024
+;		BEGIN
+;		GOSUB OPNCIP90CHLORINEVLV			                  ;8238XV101
+;		WAIT PUMP_DELAY_STIME
+;		GOSUB OPNCIP90CSSSUPPYPMP			                  ;8236P3
+;		END
+;	  ELSE
+;		BEGIN
+		GOSUB OPNCIP90CSSSUPPYPMP			                  ;8236P3
+		TURNON 'CLO2DOT0001'   ;VCM024
+;		END
+	TIMERON CSR_FLOW_DET_TMR
+
+   PUTAUTO CSS_SUPPLY_FLOW_CTRL_VLV                   ;8236FC1
+   CSS_SUPPLY_FLOW_CTRL_VLV:PID_SPVL:1 = CSS_AUTO_SETPT
+
+   RETURN
+
+;=============================================================================
+;		FINAL RINSE
+;=============================================================================
+AL7:
+
+   GOSUB SETINTERLOCK                           ;set CIP interlocks
+
+   GOSUB OPNSEATLIFTERS                               ;Open seat lifters
+   GOSUB SETSEQAUTO                                   ;Set sequence auto bit
+
+   PUTMANL CSS_SUPPLY_FLOW_CTRL_VLV                   ;8236FC1
+   PUTOUT CSS_SUPPLY_FLOW_CTRL_VLV,CSS_VLV_OUT
+
+   ;Valves in PCM4
+	IF (INSTR(CFT_FCOOL_CIP90_RESERVE_SG_ALLOF4,UNIT_SG)) THEN
+      GOSUB OPNCIP90CFTFCOOLCSSVLV                         ;8400XV107
+
+   GOSUB OPNFCOOLCSSVLV                               ;8627XV1221/8627XV1222
+   GOSUB CLSFCOOLDILUENTVLV                           ;8627XV1121/8627XV1122      
+   GOSUB OPNFCOOLOUTLTVLV                             ;8632XV11 (PCM4),8632XV21 (PCM8)       
+
+   ;CIP Valves in PCM6
+	GOSUB CLSCIP90CSSSUPPYPMP			                  ;8236P3
+;JMS004	GOSUB CLSCIP90CHLORINEVLV			                  ;8238XV101
+	GOSUB CLSCIP90CSSSUPPYPMP			                  ;8236P3
+	GOSUB CLSCIP90CSSBLDBLKVLV			                  ;8230BB401
+	GOSUB CLSCIP90STRAINERINLTVLV			               ;8230XV301
+   GOSUB OPNCIP90STRAINERBYPASSVLV			            ;8230XV302
+	GOSUB OPNCIP90CSSSUPPLYVLV			                  ;8236XV305
+	PUTMANL CSS_SUPPLY_FLOW_CTRL_VLV                   ;8236FC1
+	PUTOUT CSS_SUPPLY_FLOW_CTRL_VLV,MID_OUT
+	GOSUB OPNCIP90AMBIENTWTRBLDBLKVLV			         ;8230BB316
+	GOSUB CLSCIP90ACIDRECLAIMVLV			               ;8230XV303
+	GOSUB CLSCIP90CSSRELEASEVLV			               ;8236XV304
+	GOSUB CLSCIP90ACIDCSSBLDBLKVLV			            ;8230BB304
+	WAIT PUMP_DELAY_STIME
+	GOSUB OPNCIP90CSSSUPPYPMP			                  ;8236P3
+	TIMERON CSR_FLOW_DET_TMR
+
+   PUTAUTO CSS_SUPPLY_FLOW_CTRL_VLV                   ;8236FC1
+   CSS_SUPPLY_FLOW_CTRL_VLV:PID_SPVL:1 = CSS_AUTO_SETPT
+
+   RETURN
+
+;=============================================================================
+;		PHENO CHECK
+;=============================================================================
+AL8:
+
+   GOSUB SETINTERLOCK                           ;set CIP interlocks
+
+   GOSUB CLSSEATLIFTERS                               ;Close seat lifters
+   GOSUB SETSEQAUTO                                   ;Set sequence auto bit
+
+   ;Valves in PCM4
+	IF (INSTR(CFT_FCOOL_CIP90_RESERVE_SG_ALLOF4,UNIT_SG)) THEN
+      GOSUB OPNCIP90CFTFCOOLCSSVLV                         ;8400XV107
+
+   GOSUB CLSFCOOLCSSVLV                               ;8627XV1221/8627XV1222
+   GOSUB CLSFCOOLDILUENTVLV                           ;8627XV1121/8627XV1122      
+   GOSUB CLSFCOOLOUTLTVLV                             ;8632XV11 (PCM4),8632XV21 (PCM8)       
+
+   ;CIP Valves in PCM6
+	GOSUB CLSCIP90CSSSUPPYPMP			                  ;8236P3
+	GOSUB CLSCIP90AMBIENTWTRBLDBLKVLV			         ;8230BB316               
+   GOSUB CLSCIP90STRAINERBYPASSVLV			            ;8230XV302
+	GOSUB CLSCIP90CSSSUPPLYVLV			                  ;8236XV305
+	PUTMANL CSS_SUPPLY_FLOW_CTRL_VLV                   ;8236FC1
+	PUTOUT CSS_SUPPLY_FLOW_CTRL_VLV,MIN_OUT
+;JMS004	GOSUB CLSCIP90CHLORINEVLV			                  ;8238XV101
+	GOSUB CLSCIP90ACIDRECLAIMVLV			               ;8230XV303
+	GOSUB CLSCIP90CSSRELEASEVLV			               ;8236XV304
+	GOSUB CLSCIP90ACIDCSSBLDBLKVLV			            ;8230BB304
+	GOSUB CLSCIP90CSSBLDBLKVLV			                  ;8230BB401
+	GOSUB CLSCIP90STRAINERINLTVLV			               ;8230XV301
+          
+   RETURN
+
+;=============================================================================
+;		DEBREW SETUP CHECK
+;=============================================================================
+AL9:
+
+   GOSUB CLRINTERLOCK                           ;Clear CIP interlocks
+
+   GOSUB CLEARSEQAUTO                                 ;Clear sequence auto bit
+   GOSUB CLSSEATLIFTERS                               ;Close seat lifters
+
+   ;Valves in PCM4
+	IF (INSTR(CFT_FCOOL_CIP90_RESERVE_SG_ALLOF4,UNIT_SG)) THEN
+      GOSUB CLSCIP90CFTFCOOLCSSVLV                         ;8400XV107
+
+   GOSUB CLSFCOOLCSSVLV                               ;8627XV1221/8627XV1222
+   GOSUB CLSFCOOLDILUENTVLV                           ;8627XV1121/8627XV1122      
+   GOSUB CLSFCOOLOUTLTVLV                             ;8632XV11 (PCM4),8632XV21 (PCM8)       
+
+   ;CIP Valves in PCM6
+	GOSUB CLSCIP90CSSSUPPYPMP			                  ;8236P3
+	GOSUB CLSCIP90AMBIENTWTRBLDBLKVLV			         ;8230BB316             
+	GOSUB CLSCIP90CSSSUPPLYVLV			                  ;8236XV305
+   GOSUB CLSCIP90STRAINERBYPASSVLV			            ;8230XV302
+	PUTMANL CSS_SUPPLY_FLOW_CTRL_VLV                   ;8236FC1
+	PUTOUT CSS_SUPPLY_FLOW_CTRL_VLV,MIN_OUT
+;JMS004	GOSUB CLSCIP90CHLORINEVLV			                  ;8238XV101
+	GOSUB CLSCIP90ACIDRECLAIMVLV			               ;8230XV303
+	GOSUB CLSCIP90CSSRELEASEVLV			               ;8236XV304
+	GOSUB CLSCIP90ACIDCSSBLDBLKVLV			            ;8230BB304
+	GOSUB CLSCIP90CSSBLDBLKVLV			                  ;8230BB401
+	GOSUB CLSCIP90STRAINERINLTVLV			               ;8230XV301
+
+	RETURN
+
+;=============================================================================
+;		DEBREW OUT
+;=============================================================================
+AL10:
+
+   GOSUB CLRINTERLOCK                           ;Clear CIP interlocks
+
+   GOSUB CLEARSEQAUTO                                 ;Clear sequence auto bit
+   GOSUB CLSSEATLIFTERS                               ;Close seat lifters
+
+   ;Valves in PCM4
+	IF (INSTR(CFT_FCOOL_CIP90_RESERVE_SG_ALLOF4,UNIT_SG)) THEN
+      GOSUB CLSCIP90CFTFCOOLCSSVLV                         ;8400XV107
+
+   GOSUB CLSFCOOLCSSVLV                               ;8627XV1221/8627XV1222
+   IF (INSTR(UNIT_SG,"FCOOL1")) THEN
+      WAITUNTIL (FCOOL1_DILUENT_VLV:DEV_STAT != S_4) COUNT 60,COUNTDIL
+   ELSE
+      WAITUNTIL (FCOOL2_DILUENT_VLV:DEV_STAT != S_4) COUNT 60,COUNTDIL
+COUNTDIL:
+   GOSUB OPNFCOOLDILUENTVLV                           ;8627XV1121/8627XV1122  
+;OLD DILUENT?        GOSUB O32XV13                                 ;8632XV13,8632XV23
+   GOSUB OPNFCOOLOUTLTVLV                             ;8632XV11 (PCM4),8632XV21 (PCM8)       
+
+   ;CIP Valves in PCM6
+	GOSUB CLSCIP90CSSSUPPYPMP			                  ;8236P3
+	GOSUB CLSCIP90AMBIENTWTRBLDBLKVLV			         ;8230BB316            
+	GOSUB CLSCIP90CSSSUPPLYVLV			                  ;8236XV305
+	PUTMANL CSS_SUPPLY_FLOW_CTRL_VLV                   ;8236FC1
+	PUTOUT CSS_SUPPLY_FLOW_CTRL_VLV,MIN_OUT
+;JMS004	GOSUB CLSCIP90CHLORINEVLV			                  ;8238XV101
+	GOSUB CLSCIP90ACIDRECLAIMVLV			               ;8230XV303
+	GOSUB CLSCIP90CSSRELEASEVLV			               ;8236XV304
+	GOSUB CLSCIP90ACIDCSSBLDBLKVLV			            ;8230BB304
+	GOSUB CLSCIP90CSSBLDBLKVLV			                  ;8230BB401
+	GOSUB CLSCIP90STRAINERINLTVLV			               ;8230XV301
+   GOSUB OPNCIP90STRAINERBYPASSVLV			            ;8230XV302
+
+	RETURN
+
+;=============================================================================
+;		HOLD/FAIL
+;=============================================================================
+ALHF:
+
+   GOSUB CLEARSEQAUTO                                 ;Clear sequence auto bit
+   GOSUB CLSSEATLIFTERS                               ;Close seat lifters
+
+   ;Valves in PCM4
+;	IF (INSTR(CFT_FCOOL_CIP90_RESERVE_SG_ALLOF4,UNIT_SG)) THEN
+;      GOSUB CLSCIP90CFTFCOOLCSSVLV                         ;8400XV107
+   GOSUB CLSFCOOLDILUENTVLV                           ;8627XV1121/8627XV1122   rmaxxx   
+   GOSUB CLSFCOOLCSSVLV                               ;8627XV1221/8627XV1222
+
+   ;CIP Valves in PCM6
+	GOSUB CLSCIP90CSSSUPPYPMP			                  ;8236P3
+	GOSUB CLSCIP90AMBIENTWTRBLDBLKVLV			         ;8230BB316
+	GOSUB CLSCIP90CSSSUPPLYVLV			                  ;8236XV305
+	PUTMANL CSS_SUPPLY_FLOW_CTRL_VLV                   ;8236FC1
+	PUTOUT CSS_SUPPLY_FLOW_CTRL_VLV,MIN_OUT
+;JMS004	GOSUB CLSCIP90CHLORINEVLV			                  ;8238XV101
+	GOSUB CLSCIP90ACIDRECLAIMVLV			               ;8230XV303
+	GOSUB CLSCIP90CSSRELEASEVLV			               ;8236XV304
+	GOSUB CLSCIP90ACIDCSSBLDBLKVLV			            ;8230BB304
+	GOSUB CLSCIP90CSSBLDBLKVLV			                  ;8230BB401
+	GOSUB CLSCIP90STRAINERINLTVLV			               ;8230XV301
+   GOSUB CLSCIP90STRAINERBYPASSVLV			            ;8230XV302
+
+   GOSUB CLSFCOOLOUTLTVLV                             ;8632XV11 (PCM4),8632XV21 (PCM8)       
+
+	RETURN
+
+;=============================================================================
+;		CLOSE SEATLIFTERS
+;=============================================================================
+CLSSEATLIFTERS:
+
+   IF (INSTR(UNIT_SG,"FCOOL1")) THEN
+      BEGIN
+      TURNOFF FCOOL1_DILUENT_UPPR_SEAT	    	      ;8627XV1121SL            
+      TURNOFF CENT4_FCOOL1_UPPR_SEAT    	         ;8627XV421SL
+      TURNOFF CENT1_FCOOL1_UPPR_SEAT    	         ;8627XV121SL
+      TURNOFF CENT9_FCOOL1_UPPR_SEAT    	         ;8627XV921SL
+      TURNOFF CENT7_FCOOL1_LWR_SEAT    	         ;8627XV81L
+;jaz001      TURNOFF CENT8_FCOOL1_LWR_SEAT    	         ;8627XV811L	    	               
+      END
+   ELSE 
+      BEGIN
+      TURNOFF FCOOL2_DILUENT_UPPR_SEAT	    	      ;8627XV1122SL            
+      TURNOFF CENT4_FCOOL2_UPPR_SEAT    	         ;8627XV422SL
+      TURNOFF CENT1_FCOOL2_LWR_SEAT    	         ;8627XV122SL
+      TURNOFF CENT9_FCOOL2_LWR_SEAT    	         ;8627XV1021SL
+      TURNOFF CENT7_FCOOL2_LWR_SEAT    	         ;8627XV82L
+;jaz001      TURNOFF CENT8_FCOOL2_LWR_SEAT    	         ;8627XV812L	    	               
+      END
+
+   TIMEROFF SEAT_LIFTER_OFF_STMR    ;reset timers
+   TIMERCLR SEAT_LIFTER_OFF_STMR 
+   TIMEROFF SEAT_LIFTER_ON_STMR
+   TIMERCLR SEAT_LIFTER_ON_STMR
+
+	RETURN
+
+;=============================================================================
+;		OPEN SEATLIFTERS
+;=============================================================================
+OPNSEATLIFTERS:
+
+   IF (INSTR(UNIT_SG,"FCOOL1")) THEN
+      BEGIN
+      TURNON FCOOL1_DILUENT_UPPR_SEAT	    	      ;8627XV1121SL            
+      TURNON CENT4_FCOOL1_UPPR_SEAT    	         ;8627XV421SL
+      TURNON CENT1_FCOOL1_UPPR_SEAT    	         ;8627XV121SL
+      TURNON CENT9_FCOOL1_UPPR_SEAT    	         ;8627XV921SL
+      TURNON CENT7_FCOOL1_LWR_SEAT    	         ;8627XV81L
+;jaz001      TURNON CENT8_FCOOL1_LWR_SEAT    	         ;8627XV811L	    	               
+      END
+   ELSE 
+      BEGIN
+      TURNON FCOOL2_DILUENT_UPPR_SEAT	    	      ;8627XV1122SL            
+      TURNON CENT4_FCOOL2_UPPR_SEAT    	         ;8627XV422SL
+      TURNON CENT1_FCOOL2_LWR_SEAT    	         ;8627XV122SL
+      TURNON CENT9_FCOOL2_LWR_SEAT    	         ;8627XV1021SL
+      TURNON CENT7_FCOOL2_LWR_SEAT    	         ;8627XV82L
+;jaz001      TURNON CENT8_FCOOL2_LWR_SEAT    	         ;8627XV812L	    	               
+      END
+
+   TIMERON SEAT_LIFTER_ON_STMR
+
+	RETURN
+
+;===============================================================================	
+;		SET SEQUENCE AUTO BIT FOR CIP DEVICES						
+;===============================================================================	
+SETSEQAUTO:
+
+   ;Set the sequence auto bit ($T5) for all devices specified in the
+   ;device state forms.
+   CIP90_ACID_RECLAIM_VLV:DEV_TMP0 = OR(CIP90_ACID_RECLAIM_VLV:DEV_TMP0,T_5)        ;8230XV303
+   CIP90_CSS_RELEASE_VLV:DEV_TMP0 = OR(CIP90_CSS_RELEASE_VLV:DEV_TMP0,T_5)          ;8236XV304
+   CIP90_ACID_CSS_BLDBLK_VLV:DEV_TMP0 = OR(CIP90_ACID_CSS_BLDBLK_VLV:DEV_TMP0,T_5)  ;8230BB304
+   CIP90_STRAINER_INLT_VLV:DEV_TMP0 = OR(CIP90_STRAINER_INLT_VLV:DEV_TMP0,T_5)     ;8230XV301
+   CIP90_STRAINER_BYPASS_VLV:DEV_TMP0 = OR(CIP90_STRAINER_BYPASS_VLV:DEV_TMP0,T_5) ;8230XV302
+;JMS004   CIP90_CHLORINE_VLV:DEV_TMP0 = OR(CIP90_CHLORINE_VLV:DEV_TMP0,T_5)                ;8238XV101
+   CIP90_CSS_SUPPLY_VLV:DEV_TMP0 = OR(CIP90_CSS_SUPPLY_VLV:DEV_TMP0,T_5)            ;8236XV305
+   CIP90_AMBIENT_WTR_BLDBLK_VLV:DEV_TMP0 = OR(CIP90_AMBIENT_WTR_BLDBLK_VLV:DEV_TMP0,T_5)       ;8230BB316
+   CIP90_CSS_BLDBLK_VLV:DEV_TMP0 = OR(CIP90_CSS_BLDBLK_VLV:DEV_TMP0,T_5)            ;8230BB401
+   CIP90_CSS_SUPPY_PMP:DEV_TMP0 = OR(CIP90_CSS_SUPPY_PMP:DEV_TMP0,T_5)              ;8236P3
+
+   RETURN
+
+;==============================================================================
+;          CLEAR SEQUENCE AUTO
+;==============================================================================
+CLEARSEQAUTO:
+
+   ;Clear the sequence auto bit ($T5) for all devices specified in the
+   ;device state forms.
+   CIP90_ACID_RECLAIM_VLV:DEV_TMP0 = AND(CIP90_ACID_RECLAIM_VLV:DEV_TMP0,NOT(T_5))        ;8230XV303
+   CIP90_CSS_RELEASE_VLV:DEV_TMP0 = AND(CIP90_CSS_RELEASE_VLV:DEV_TMP0,NOT(T_5))          ;8236XV304
+   CIP90_ACID_CSS_BLDBLK_VLV:DEV_TMP0 = AND(CIP90_ACID_CSS_BLDBLK_VLV:DEV_TMP0,NOT(T_5))  ;8230BB304
+   CIP90_STRAINER_INLT_VLV:DEV_TMP0 = AND(CIP90_STRAINER_INLT_VLV:DEV_TMP0,NOT(T_5))      ;8230XV301
+   CIP90_STRAINER_BYPASS_VLV:DEV_TMP0 = AND(CIP90_STRAINER_BYPASS_VLV:DEV_TMP0,NOT(T_5)) ;8230XV302
+;JMS004   CIP90_CHLORINE_VLV:DEV_TMP0 = AND(CIP90_CHLORINE_VLV:DEV_TMP0,NOT(T_5))                ;8238XV101
+   CIP90_CSS_SUPPLY_VLV:DEV_TMP0 = AND(CIP90_CSS_SUPPLY_VLV:DEV_TMP0,NOT(T_5))            ;8236XV305
+   CIP90_AMBIENT_WTR_BLDBLK_VLV:DEV_TMP0 = AND(CIP90_AMBIENT_WTR_BLDBLK_VLV:DEV_TMP0,NOT(T_5))       ;8230BB316
+   CIP90_CSS_BLDBLK_VLV:DEV_TMP0 = AND(CIP90_CSS_BLDBLK_VLV:DEV_TMP0,NOT(T_5))            ;8230BB401
+   CIP90_CSS_SUPPY_PMP:DEV_TMP0 = AND(CIP90_CSS_SUPPY_PMP:DEV_TMP0,NOT(T_5))              ;8236P3
+
+    RETURN
+
+;=============================================================================
+;  CLEAR INTERLOCKS		
+;=============================================================================
+CLRINTERLOCK:
+
+   IF (INSTR(UNIT_SG,"FCOOL1")) THEN
+      BEGIN
+;      FCOOL1_CSS_VLV:DEV_TMP1 = OR(FCOOL1_CSS_VLV:DEV_TMP1,T_30)		;8627XV1221
+      FCOOL1_DILUENT_VLV:DEV_TMP1 = OR(FCOOL1_DILUENT_VLV:DEV_TMP1,T_30)	;8627XV1121 Fass Cooler Diluent Valve 
+;jaz002      CFG9_DISCH_MVLV:DEV_TMP1 = OR(CFG9_DISCH_MVLV:DEV_TMP1,T_30)	;8627XV921 Centrifuge discharge matrix valve 
+      CFG1_FCOOL1_MVLV:DEV_TMP1 = OR(CFG1_FCOOL1_MVLV:DEV_TMP1,T_30)		;8627XV811 Cent 1 to fass cooler 1 matrix valve 
+      CFG4_FCOOL1_MVLV:DEV_TMP1 = OR(CFG4_FCOOL1_MVLV:DEV_TMP1,T_30)		;8627XV421 Cent 4 to fass cooler 1 matrix valve
+      CFG9_COOLER_VLV:DEV_TMP1 = OR(CFG9_COOLER_VLV:DEV_TMP1,T_30)		;Cent 9 to fass cooler 1 matrix valve		;jaz002
+      CFG10_COOLER1_VLV:DEV_TMP1 = OR(CFG10_COOLER1_VLV:DEV_TMP1,T_30)		;Cent 10 to fass cooler 1 matrix valve		;jaz002
+      CFG11_FCOOL1_MVLV:DEV_TMP1 = OR(CFG11_FCOOL1_MVLV:DEV_TMP1,T_30)		;Cent 11 to fass cooler 1 matrix valve		;jaz002
+;jaz001      CFG8_FCOOL1_MVLV:DEV_TMP1 = OR(CFG8_FCOOL1_MVLV:DEV_TMP1,T_30)	;8627XV811 Cent 8 to fass cooler 1 matrix valve 
+;jaz001      CFG7_FCOOL1_MVLV:DEV_TMP1 = OR(CFG7_FCOOL1_MVLV:DEV_TMP1,T_30)	;8627XV81 Cent 7 to fass cooler 1 matrix valve 
+      END
+   ELSE
+      BEGIN
+;      FCOOL2_CSS_VLV:DEV_TMP1 = OR(FCOOL2_CSS_VLV:DEV_TMP1,T_30)		;8627XV1222
+      FCOOL2_DILUENT_VLV:DEV_TMP1 = OR(FCOOL2_DILUENT_VLV:DEV_TMP1,T_30)	;8627XV1122 Fass Cooler Diluent Valve 
+;jaz002      CFG10_DISCH_MVLV:DEV_TMP1 = OR(CFG10_DISCH_MVLV:DEV_TMP1,T_30)	;8627XV1022 Centrifuge discharge matrix valve 
+      CFG1_FCOOL2_MVLV:DEV_TMP1 = OR(CFG1_FCOOL2_MVLV:DEV_TMP1,T_30)		;8627XV812 Cent 1 to fass cooler 1 matrix valve 
+      CFG4_FCOOL2_MVLV:DEV_TMP1 = OR(CFG4_FCOOL2_MVLV:DEV_TMP1,T_30)		;8627XV422 Cent 4 to fass cooler 1 matrix valve
+      CFG9_COOLER2_VLV:DEV_TMP1 = OR(CFG9_COOLER2_VLV:DEV_TMP1,T_30)		;Cent 9 to fass cooler 2 matrix valve		;jaz002
+      CFG10_COOLER_VLV:DEV_TMP1 = OR(CFG10_COOLER_VLV:DEV_TMP1,T_30)		;Cent 10 to fass cooler 2 matrix valve		;jaz002
+      CFG11_FCOOL2_MVLV:DEV_TMP1 = OR(CFG11_FCOOL2_MVLV:DEV_TMP1,T_30)		;Cent 11 to fass cooler 2 matrix valve		;jaz002
+;jaz001      CFG8_FCOOL2_MVLV:DEV_TMP1 = OR(CFG8_FCOOL2_MVLV:DEV_TMP1,T_30)	;8627XV812 Cent 8 to fass cooler 1 matrix valve 
+;jaz001      CFG7_FCOOL2_MVLV:DEV_TMP1 = OR(CFG7_FCOOL2_MVLV:DEV_TMP1,T_30)	;8627XV82 Cent 7 to fass cooler 1 matrix valve 
+      END
+
+	RETURN
+
+;=============================================================================
+;  SET INTERLOCKS		
+;=============================================================================
+SETINTERLOCK:
+
+   IF (INSTR(UNIT_SG,"FCOOL1")) THEN
+	BEGIN
+	FCOOL1_DILUENT_VLV:DEV_TMP1 = AND(FCOOL1_DILUENT_VLV:DEV_TMP1,NOT(T_30))	;8627XV1121 Fass Cooler Diluent Valve 
+;      FCOOL1_CSS_VLV:DEV_TMP1 = AND(FCOOL1_CSS_VLV:DEV_TMP1,NOT(T_30))			;8627XV1221
+;jaz002      CFG9_DISCH_MVLV:DEV_TMP1 = AND(CFG9_DISCH_MVLV:DEV_TMP1,NOT(T_30))		;8627XV921 Centrifuge discharge matrix valve 
+	CFG1_FCOOL1_MVLV:DEV_TMP1 = AND(CFG1_FCOOL1_MVLV:DEV_TMP1,NOT(T_30))		;8627XV811 Cent 1 to fass cooler 1 matrix valve
+	CFG4_FCOOL1_MVLV:DEV_TMP1 = AND(CFG4_FCOOL1_MVLV:DEV_TMP1,NOT(T_30))		;8627XV421 Cent 4 to fass cooler 1 matrix valve
+	CFG9_COOLER_VLV:DEV_TMP1 = AND(CFG9_COOLER_VLV:DEV_TMP1,NOT(T_30))		;Cent 9 to fass cooler 1 matrix valve	;jaz002
+	CFG10_COOLER1_VLV:DEV_TMP1 = AND(CFG10_COOLER1_VLV:DEV_TMP1,NOT(T_30))		;Cent 10 to fass cooler 1 matrix valve	;jaz002
+	CFG11_FCOOL1_MVLV:DEV_TMP1 = AND(CFG11_FCOOL1_MVLV:DEV_TMP1,NOT(T_30))		;Cent 11 to fass cooler 1 matrix valve	;jaz002
+;jaz001	CFG8_FCOOL1_MVLV:DEV_TMP1 = AND(CFG8_FCOOL1_MVLV:DEV_TMP1,NOT(T_30))		;8627XV811 Cent 8 to fass cooler 1 matrix valve 
+;jaz001	CFG7_FCOOL1_MVLV:DEV_TMP1 = AND(CFG7_FCOOL1_MVLV:DEV_TMP1,NOT(T_30))		;8627XV81 Cent 7 to fass cooler 1 matrix valve 
+	END
+   ELSE
+	BEGIN
+;	FCOOL2_CSS_VLV:DEV_TMP1 = AND(FCOOL2_CSS_VLV:DEV_TMP1,NOT(T_30))		;8627XV1222
+	FCOOL2_DILUENT_VLV:DEV_TMP1 = AND(FCOOL2_DILUENT_VLV:DEV_TMP1,NOT(T_30))	;8627XV1122 Fass Cooler Diluent Valve 
+;jaz002	CFG10_DISCH_MVLV:DEV_TMP1 = AND(CFG10_DISCH_MVLV:DEV_TMP1,NOT(T_30))		;8627XV1022 Centrifuge discharge matrix valve 
+	CFG1_FCOOL2_MVLV:DEV_TMP1 = AND(CFG1_FCOOL2_MVLV:DEV_TMP1,NOT(T_30))		;8627XV822 Cent 1 to fass cooler 1 matrix valve 
+	CFG4_FCOOL2_MVLV:DEV_TMP1 = AND(CFG4_FCOOL2_MVLV:DEV_TMP1,NOT(T_30))		;8627XV422 Cent 4 to fass cooler 1 matrix valve 
+	CFG9_COOLER2_VLV:DEV_TMP1 = AND(CFG9_COOLER2_VLV:DEV_TMP1,NOT(T_30))		;Cent 9 to fass cooler 2 matrix valve	;jaz002
+	CFG10_COOLER_VLV:DEV_TMP1 = AND(CFG10_COOLER_VLV:DEV_TMP1,NOT(T_30))		;Cent 10 to fass cooler 2 matrix valve	;jaz002
+	CFG11_FCOOL2_MVLV:DEV_TMP1 = AND(CFG11_FCOOL2_MVLV:DEV_TMP1,NOT(T_30))		;Cent 11 to fass cooler 2 matrix valve	;jaz002
+;jaz001	CFG8_FCOOL2_MVLV:DEV_TMP1 = AND(CFG8_FCOOL2_MVLV:DEV_TMP1,NOT(T_30))    	;8627XV812 Cent 8 to fass cooler 1 matrix valve 
+;jaz001	CFG7_FCOOL2_MVLV:DEV_TMP1 = AND(CFG7_FCOOL2_MVLV:DEV_TMP1,NOT(T_30))    	;8627XV82 Cent 7 to fass cooler 1 matrix valve 
+	END
+
+	RETURN
+
+;===============================================================================
+;               O P E N         D E V I C E     S U B R O U T I N E
+;===============================================================================
+
+   ;This subroutine will attempt to open any device that it is
+   ;commanded to. The subroutine will check for five things:
+   ;if the program is already in failure hold (DEV_FAILED)
+   ;if the device has been faulted ($f0)
+   ;if the device has been interlocked ($s4)
+   ;if the device is already open ($s1)
+   ;if the device is in manual ($m0) it will be put to auto
+
+OPENDEV:
+
+   ;if the program is already in failure hold
+   ;and device faulted or interlocked (the cause of failure hold)
+   ;then return to the program
+   ;allowing the routine to continue will cause an infinite loop
+   IF (DEV_FAILED_FG & (AND(DEV_PTR:DEV_DFLG,F_0) | AND(DEV_PTR:DEV_STAT,S_4))) THEN
+      GOTO OUTOPN
+
+   ;if the fault bit is set or the interlock bit is set, then send the program to fail
+   IF (AND(DEV_PTR:DEV_DFLG,F_0) | AND(DEV_PTR:DEV_STAT,S_4)) THEN
+      GOTO FLTOPN
+
+   ;if device is already opened, then return to the program
+   IF (AND(DEV_PTR:DEV_STAT,S_1)) THEN
+      GOTO OUTOPN
+   DEV_PTR:DEV_MODE = OR(DEV_PTR:DEV_MODE,M_0)     ;put device into auto
+
+   ;open device and waituntil either device opens or faults
+   OPEN DEV_PTR
+   WAITUNTIL (AND(DEV_PTR:DEV_STAT,S_1) | AND(DEV_PTR:DEV_DFLG,F_0)) COUNT 60,FLTOPN
+
+   ;if device is faulted
+   IF (AND(DEV_PTR:DEV_DFLG,F_0)) THEN
+      BEGIN
+FLTOPN:         
+      DEV_FAILED_FG = 1         ; set failure hold flag
+      GOTO FAIL
+      END
+OUTOPN:
+      RETURN
+
+;===============================================================================
+;               OPEN DEVICE SUBROUTINE 
+;===============================================================================
+OPENREMDEV:
+
+   ;if the fault bit is set or the interlock bit is set
+   IF (AND(DEV_PTR:DEV_DFLG,F_0) | AND(DEV_PTR:DEV_STAT,S_4)) THEN
+      BEGIN
+      IF (COMPAR(SEQ_STATUS,"FAIL",4,EQ)) THEN    ;If already in fail
+         RETURN
+      GOTO FAIL                              ;Otherwise send the program to fail
+      END
+
+   IF (AND(DEV_PTR:DEV_STAT,S_1)) THEN       ;If device is already opened
+      RETURN
+
+   PUTAUTO DEV_PTR                           ;Put device into auto
+   OPEN DEV_PTR                              ;Open device and waituntil either device opens or faults
+
+   ;Now wait for the device to open, but use this logic without
+   ;WAITUNTIL to minimize network traffic.
+   REM_LOOP_CNT = 0
+OPNREMLOOP:
+   IF (AND(DEV_PTR:DEV_DFLG,F_0) | (REM_LOOP_CNT >= 60)) THEN
+      GOTO FAIL                       ;Device failed or timed out
+   IF (AND(DEV_PTR:DEV_STAT,S_1)) THEN
+      RETURN                          ;Device opened
+   REM_LOOP_CNT = REM_LOOP_CNT + 1
+   WAIT 1
+   GOTO OPNREMLOOP
+
+   RETURN
+
+;===============================================================================
+;               C L O S E       D E V I C E     S U B R O U T I N E
+;===============================================================================
+
+   ;This subroutine will attempt to open any device that it is
+   ;commanded to. The subroutine will check for five things:
+   ;if the program is already in failure hold (DEV_FAILED)
+   ;if the device has been faulted ($f0)
+   ;if the device has been interlocked ($s4)
+   ;if the device is already closed ($s0)
+    ;if the device is in manual ($m0)
+
+CLOSDEV:
+   ;if the program is already in failure hold
+   ;and device faulted or interlocked (the cause of failure hold)
+   ;then return to the program
+   ;allowing the routine to continue will cause an infinite loop
+   IF (DEV_FAILED_FG & (AND(DEV_PTR:DEV_DFLG,F_0)|AND(DEV_PTR:DEV_STAT,S_4))) THEN
+      GOTO OUTCLS
+
+   ;if the fault bit is set, send the program to hold
+   IF (AND(DEV_PTR:DEV_DFLG,F_0)) THEN
+      GOTO FLTCLS
+
+   ;if the interlock bit is set, return to the program
+   IF (AND(DEV_PTR:DEV_STAT,S_4)) THEN
+      GOTO OUTCLS
+
+   ;if device is already closed, then return to the program
+   IF (AND(DEV_PTR:DEV_STAT,S_0)) THEN
+      GOTO OUTCLS
+   DEV_PTR:DEV_MODE = OR(DEV_PTR:DEV_MODE,M_0)     ;put device into auto
+
+   ;close device and waituntil either device closes or faults
+   CLOSE DEV_PTR
+   WAITUNTIL (AND(DEV_PTR:DEV_STAT,S_0) | AND(DEV_PTR:DEV_DFLG,F_0)) COUNT 60,FLTCLS
+
+   ;if device is faulted
+   IF (AND(DEV_PTR:DEV_DFLG,F_0)) THEN
+      BEGIN
+FLTCLS:         
+      DEV_FAILED_FG = 1                 ; set failure hold flag
+      GOTO FAIL
+      END
+OUTCLS:
+      RETURN
+
+;===============================================================================
+;               CLOSE REMOTE DEVICE SUBROUTINE 
+;===============================================================================
+CLOSREMDEV:
+
+   IF (AND(DEV_PTR:DEV_DFLG,F_0)) THEN     ;if the fault bit is set
+      BEGIN
+      IF (COMPAR(SEQ_STATUS,"FAIL",4,EQ)) THEN    ;If already in fail
+         RETURN
+      GOTO FAIL                       ;Otherwise send the program to fail
+      END
+
+   IF (AND(DEV_PTR:DEV_STAT,S_4)) THEN     ;If the interlock bit is set
+      RETURN
+
+   IF (AND(DEV_PTR:DEV_STAT,S_0)) THEN     ;If device is already closed
+      RETURN
+
+   PUTAUTO DEV_PTR                         ;Put device into auto
+   CLOSE DEV_PTR           ;Close device and waituntil either device closes or faults
+
+   ;Now wait for the device to close, but use this logic without
+   ;WAITUNTIL to minimize network traffic.
+   REM_LOOP_CNT = 0
+CLSREMLOOP:
+   IF (AND(DEV_PTR:DEV_DFLG,F_0) | (REM_LOOP_CNT >= 60)) THEN
+      GOTO FAIL                       ;Device failed or timed out
+   IF (AND(DEV_PTR:DEV_STAT,S_0)) THEN
+      RETURN                          ;Device closed
+   REM_LOOP_CNT = REM_LOOP_CNT + 1
+   WAIT 1
+   GOTO CLSREMLOOP
+
+   RETURN
+
+;*******************************************************************************
+;
+;       ERROR HANDLING SUBROUTINE
+;
+;*******************************************************************************
+;
+;       ERROR_NUM_INT:      Error number storage
+;       ERROR_LIN_INT:      Error line storage
+;
+;       This subroutine handles any error problems resulting from the
+;       execution of this program. Each error is handled in 3 different
+;       ways. If the error is insignificant, it is ignored and the program
+;       returns to resume execution. If the error is significant but not
+;       critical (valid), it is reported to printer and program continues
+;       normal execution. If it is critical the program suspends execution
+;       a message is printed to the printer, and SKD light is blinked.
+;
+;       List of specifically handled errors:
+;
+;       Error   Description                             Type
+;       -----   -----------                             ----
+;       19      program already in kick subroutine      valid
+;       32      undefined communications packet type    insignificant
+;       41      pcm db header not loaded                insignificant
+;       69      ipn not defined                         insignificant
+;       87      Holding program that is not running     critical
+;       162     no such program this pcm                insignificant
+;       165     sequence program already running        critical
+;       170     serial number mismatch                  critical
+;       179     illegal subroutine                      insignificant
+;       187     could not be remote access              insignificant
+;       193     no such program this pcm                valid
+;       198     illegal subroutine stack nesting        insignificant
+;       199     illegal recipe data file                critical
+;       200     recipe file not loaded inot memory      critical
+;       201     recipe load not enabled                 critical
+;       222     boards dead                             insignificant
+;       226     board error                             insignificant
+;       245     both pcms down                          insignificant
+
+ERRSUB:
+        ERROR_NUM_INT = ABS(ERRNUM())
+        ERROR_LIN_INT = ERRLIN()
+
+   ;if error is valid, print message, clear error, and return to program
+   PRINT LOG_ADI, "*** ERROR %i AT LINE %i ***",ERROR_NUM_INT,ERROR_LIN_INT
+
+   ;if error crtical, message has been printed, blink SKD light
+   ;wait for engineer to correct problem
+   LAMP LAMP_ADI,LAMP_NUMBER,RED           ; skd flash red
+   IF (ERROR_NUM_INT = 187) THEN                               
+      FAIL_MSG = "FCCMDDEV CROSS PCM COMM ERROR"      
+   ELSE                                                    
+      FAIL_MSG = "FCCMDDEV PROGRAM ERROR"     
+   GOSUB FAIL                              
+   SA_MESSAGE = FAIL_MSG                   
+   ERSRET
+
+
+#include <fcool_dev.inc>
+
+   NOP
+;@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+   END

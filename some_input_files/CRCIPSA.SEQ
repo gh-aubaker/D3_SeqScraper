@@ -1,0 +1,1617 @@
+;******************************************************************************
+;*                                                                             
+;*      PROGRAM NAME:   D3APP\SETUP\COMMON\SABL\CRCIPSA.SEQ                        
+;*      ------------                                                          
+;*                                                                             
+;*                                                                            
+;*      PROJECT NAME:   MILLER BREWING, TRENTON, OH                           
+;*      PROJECT NUM :   6001-050                     
+;*      PCM NUMBER  :   PCM1 and PCM2                                                 
+;*      WRITTEN BY  :   Robert Ard                           
+;*                                                                            
+;*      DATE        :   November 2006                                        
+;*                                                                            
+;*                                                                            
+;******************************************************************************
+;*                                                                            
+;*      MODIFICATION LOG:                                                      
+;*      ----------------                                                      
+;	DATE			PATCH			DESCRIPTION
+;	----			--------		--------------                                                                            
+;	05nov2006	rma000		rewrite of original program to run unit-relative in both
+;									brewhouse PCMs, move device alignments into respective kettles
+;	18dec2006	rma001		have this pgm start the hot wort tank caustic brew
+;	22dec2006	rma002		let this program start without a continue commmand
+;									moved some setup checks into ltcipsa
+;	22dec2006	rma-temp		force pheno result to negative, no way to sample runoff lines yet
+;	23dec2006	rma003		use caustic brew fg to know when Ltun is finished
+;	37dec2010	mrp001		remove hv11,13,15,24,21,and 23 because of piping changes
+;	09-jan 11	mrp002	   remove px11 because of piping changes
+;	16/DEC/12   VCM047      Changes for grant removal
+;  12-MAY-20 	JMS001  		Removed 8215PX6
+;******************************************************************************
+;*
+;*
+;*		PROGRAM FUNCTION:
+;*		----------------
+;*		This program performs the CIP sequence administration for the 
+;*		Caustic Recirc (CR) and Knockout Lines as part of the caustic brew.
+;*		The program is started when the lauter tun has finished sending its caustic into the
+;*		the kettles. This program commands the kettles to knockout that caustic to the hot wort
+;*		tank, then waits for the lauter tun CIP to finish before walking the kettles through
+;*		the caustic circulate and rinse steps. 	
+;*
+;*
+;******************************************************************************
+;*      Define Units
+;******************************************************************************
+	UNIT    BKCOM1                           
+	COMMON  ALLOF0,ALLOF1,ALLOF2,CIPCOM
+	RUNIT BKCOM2
+
+#include <bkcom_upf.h>
+#include <allof1_upf.h>
+#include <allof2_upf.h>
+#include <cipcom_upf.h>
+#include <constants.h>
+#include <allof1_epn.h>
+#include <allof2_epn.h>
+
+
+	CRSA_ALARM      == 16
+	SABL_ALARM      == 60
+		
+
+
+;===============================================================================
+;  MAIN         - Set Error and Hold Subroutines
+;               - Initialize Variables Here
+;===============================================================================
+MAIN:
+
+	ON ERROR GOSUB ERRSUB           ;define error handling routine
+	ON HOLD  GOSUB HOLDSUB          ;define hold interrupt handling routine
+
+	IF (SA_STATE_PTR > 1) THEN	;If pcm (or program) was reloaded while in a running state (not sytem off)
+		GOTO HOLDSUB		;Must restart from hold              
+
+CONTRETURN:
+	ON SA_STATE_PTR GOTO ST1,ST2,ST3,ST4,ST5,ST6,ST7,ST8,ST9,ST10
+	ON (SA_STATE_PTR - 10) GOTO ST11,ST12,ST13,ST14,ST15
+
+	IF (SA_STATE_PTR != 0) THEN	;If sa state not zero
+		BEGIN
+		SA_MESSAGE = "ILLEGAL STATE NUMBER"
+		GOTO FAIL
+		END
+
+	GOSUB SAINIT			;Initialize program
+
+
+;===============================================================================
+;  SETUP CHECK
+;===============================================================================
+ST1:
+
+	SA_STATE_PTR = 1			;Set sa state
+	GOSUB STATEINIT			;Initialize state 
+
+	LAMP LOG_ADI,CRSA_ALARM,FLASH_YELLOW      ;SKD light flash yellow
+	LAST_SKID_COLOR = FLASH_YELLOW
+	CR_CIP_RUN_PTR       = 1                    ;CR CIP SA running flag.
+
+	SA_STATUS_PTR = "CR/KO SETUP CHECK"
+	PRINT LOG_ADI,"CR/KO SETUP CHECK"       ;LMG001
+	SEQ_STATUS_PTR = ""                   ;Display SEQ status on graphic
+	SEQ_MODE_SG = "CAUSTIC BREW"       ;Display SEQ mode   on graphic
+;	SA_2_MESSAGE      = ""
+
+	SA_TMP_INT = DATSTR(BRWHSE_CIP_DATE_PTR)      	
+	SA_TMP_INT = TIMSTR(BRWHSE_CIP_START_TIME_PTR)	
+	IF COMPAR(UNIT_SG,"BKCOM1",6,EQ) THEN
+		BRWHSE_CIP_VESSEL_CLND_PTR = "LN1 BK KO&RECIRC LINES" 	
+	ELSE BRWHSE_CIP_VESSEL_CLND_PTR = "LN2 BK KO&RECIRC LINES" 	
+	BRWHSE_CIP_TYPE_PTR = SEQ_MODE_SG
+
+	;----------------------------------------------------
+	; WAIT FOR CONT. CMD
+	;----------------------------------------------------
+;rma002	SA_MESSAGE     = "CONTINUE CMD TO RESUME CB"
+;rma002	SC_SA_CONT_CMD = 0
+;rma002	WAITUNTIL SC_SA_CONT_CMD
+;rma002	SC_SA_CONT_CMD = 0
+
+	GOSUB CONTCHK			;check kettle, hwt, vessel statuses, prox switches, hand valves
+	IF (HWT_LEVEL_PTR:AI_MEAS > HWT_LOW_LVL) THEN
+		BEGIN
+		SA_MESSAGE = "HOT WORT TNK NOT EMPTY"
+		GOTO FAIL
+		END
+
+	LAMP LOG_ADI,CRSA_ALARM,GREEN
+	LAST_SKID_COLOR = GREEN  ;VCM005
+	SA_MESSAGE     = ""
+	SC_SA_CONT_CMD = 0
+
+;	TIMEROFF STEP_TIMER                  ; Reset step timer
+	TIMERCLR STEP_TIMER
+
+	;start CAUSTIC BREW program in first kettle
+	GOSUB STARTFIRSTBK 		;start caustic brew program in first kettle
+        
+
+;===============================================================================
+;  KO CAUSTIC FIRST BK
+;===============================================================================
+ST2:
+
+	SA_STATE_PTR = 2			;Set sa state
+	GOSUB STATEINIT			;Initialize state 
+
+
+ST2SS:
+	;---------------------------------------------------------------------
+	; Steady state conditions
+	;---------------------------------------------------------------------
+	GOSUB CONTCHK
+
+	;---------------------------------------------------------------------
+	; Transition conditions
+	;---------------------------------------------------------------------
+	
+	;when bkett signals empty advance crcip to next step... do not advance kettle yet
+	;first kettle goes to wait state and waits there for crcipsa to command it to advance
+	IF (FIRSTBK_EMPTY_FG_PTR) THEN
+		GOTO ST3		;KO CAUSTIC SECOND BK
+ 
+	WAIT 1
+	GOTO ST2SS
+            
+
+
+;==============================================================================
+;  KO CAUSTIC SECOND BK
+;===============================================================================
+ST3:
+
+	SA_STATE_PTR = 3			;Set sa state
+	GOSUB STATEINIT			;Initialize state 
+	GOSUB STARTSECONDBK 		;start caustic brew program in second kettle
+
+
+ST3SS:
+	;---------------------------------------------------------------------
+	; Steady state conditions
+	;---------------------------------------------------------------------
+	GOSUB CONTCHK
+
+	IF COMPAR(SECONDBK_SA_STATUS_PTR,"SETUP CHECK",11,EQ) THEN
+		SA_2_MESSAGE = "WAITING FOR BK CONTINUE"
+	ELSE IF (SECONDBK_EMPTY_FG_PTR) THEN
+		SA_2_MESSAGE = "WAITING LTUN CIP FINISH"
+	ELSE IF COMPAR(SECONDBK_SA_STATUS_PTR,"KO CAUSTIC",10,EQ) THEN
+		SA_2_MESSAGE = ""
+
+	;---------------------------------------------------------------------
+	; Transition conditions
+	;---------------------------------------------------------------------
+
+	;when kettle signals empty and ltun cip is done, command first bk to csr the rinse from ltun
+	IF COMPAR(UNIT_SG,"BKCOM1",6,EQ) THEN
+;rma003		SA_EX1_FG = (PGMSTAT("LTCIPSA1","LTUN1") = NOT_RUNNING)
+		SA_EX1_FG = LT1_CAUSTIC_BREW_CIPCOM = 0   ;rma003
+	ELSE IF  COMPAR(UNIT_SG,"BKCOM2",6,EQ) THEN
+;rma003		SA_EX1_FG = (PGMSTAT("LTCIPSA2","LTUN2") = NOT_RUNNING)
+		SA_EX1_FG = LT2_CAUSTIC_BREW_CIPCOM = 0   ;rma003
+
+	;second kettle empty and lauter tun CIP is done...
+	IF (SECONDBK_EMPTY_FG_PTR & SA_EX1_FG) THEN
+		BEGIN
+;		CRCIP_FIRSTBK_ADV_STEP_CMD_PTR = 1	 ;advance first kettle to csr rinse from ltun
+		SECONDBK_EMPTY_FG_PTR = 0
+		FIRSTBK_EMPTY_FG_PTR = 0
+		GOTO ST4 	;CSR RINSE FIRST BK
+		END
+
+	WAIT 1
+	GOTO ST3SS
+
+
+;==============================================================================
+;  CSR RINSE FIRST BK
+;===============================================================================
+ST4:
+
+	SA_STATE_PTR = 4			;Set sa state
+	GOSUB STATEINIT			;Initialize state
+
+ST4LOOP:
+	SA_2_MESSAGE = "WAITING FOR KETTLE ADVANCE"
+	CRCIP_FIRSTBK_ADV_STEP_CMD_PTR = 1	 ;advance first kettle to csr rinse from ltun
+	IF COMPAR(FIRSTBK_SA_STATUS_PTR,"WAIT FOR OTHER BK",17,EQ) THEN
+		GOTO ST4LOOP 
+	SA_2_MESSAGE = ""
+
+
+ST4SS:
+	;---------------------------------------------------------------------
+	; Steady state conditions
+	;---------------------------------------------------------------------
+	GOSUB CONTCHK
+
+	;---------------------------------------------------------------------
+	; Transition conditions
+	;---------------------------------------------------------------------
+
+	IF (FIRSTBK_EMPTY_FG_PTR)&(CRCIP_FIRSTBK_ADV_STEP_CMD_PTR= 0) THEN
+		BEGIN
+;		CRCIP_SECONDBK_ADV_STEP_CMD_PTR = 1	 ;advance second kettle to csr rinse from ltun
+		FIRSTBK_EMPTY_FG_PTR = 0
+		GOTO ST5			;CSR RINSE SECOND BK 
+		END
+
+	WAIT 1
+	GOTO ST4SS
+
+
+;==============================================================================
+;  CSR RINSE SECOND BK
+;===============================================================================
+ST5:
+
+	SA_STATE_PTR = 5			;Set sa state
+	GOSUB STATEINIT			;Initialize state 
+
+ST5LOOP:
+	SA_2_MESSAGE = "WAITING FOR KETTLE ADVANCE"
+	CRCIP_SECONDBK_ADV_STEP_CMD_PTR = 1	 ;advance second kettle to csr rinse from ltun
+	IF COMPAR(SECONDBK_SA_STATUS_PTR,"WAIT FOR OTHER BK",17,EQ)	THEN
+		GOTO ST5LOOP 
+	SA_2_MESSAGE = ""
+
+ST5SS:
+	;---------------------------------------------------------------------
+	; Steady state conditions
+	;---------------------------------------------------------------------
+	GOSUB CONTCHK
+
+	;---------------------------------------------------------------------
+	; Transition conditions
+	;---------------------------------------------------------------------
+	;when second kettle is empty, advance first kettle to caustic recirc
+;VCMHHH	IF (SECONDBK_EMPTY_FG_PTR)&(!CRCIP_SECONDBK_ADV_STEP_CMD_PTR) THEN
+	IF (SECONDBK_EMPTY_FG_PTR)&(!CRCIP_SECONDBK_ADV_STEP_CMD_PTR)&(CR_ENA_ALLOF_PTR) THEN
+		BEGIN
+;		CRCIP_FIRSTBK_ADV_STEP_CMD_PTR = 1	 ;advance first kettle to recirc caustic
+		SECONDBK_EMPTY_FG_PTR = 0
+		GOTO ST6			;RECIRC CAUSTIC FIRST BK 
+		END
+
+;VCMHHH
+	IF (SECONDBK_EMPTY_FG_PTR)&(!CRCIP_SECONDBK_ADV_STEP_CMD_PTR)&(!CR_ENA_ALLOF_PTR) THEN
+		BEGIN
+		SECONDBK_EMPTY_FG_PTR = 0
+		GOTO ST10			;TANK RINSE FIRST BK
+		END
+
+	WAIT 1
+	GOTO ST5SS
+
+;==============================================================================
+;  RECIRC FIRST BK
+;===============================================================================
+ST6:
+
+	SA_STATE_PTR = 6			;Set sa state
+	GOSUB STATEINIT			;Initialize state 
+
+ST6LOOP:
+	SA_2_MESSAGE = "WAITING FOR KETTLE ADVANCE"
+	CRCIP_FIRSTBK_ADV_STEP_CMD_PTR = 1	 ;advance first kettle to recirc caustic
+	IF COMPAR(FIRSTBK_SA_STATUS_PTR,"WAIT FOR OTHER BK",17,EQ) THEN
+		GOTO ST6LOOP 
+	SA_2_MESSAGE = ""
+
+ST6SS:
+	;---------------------------------------------------------------------
+	; Steady state conditions
+	;---------------------------------------------------------------------
+	GOSUB CONTCHK
+
+	;---------------------------------------------------------------------
+	; Transition conditions
+	;---------------------------------------------------------------------
+	;when first kettle is empty, advance second kettle to casutic recirc
+	IF (FIRSTBK_EMPTY_FG_PTR)&(!CRCIP_FIRSTBK_ADV_STEP_CMD_PTR) THEN
+		BEGIN
+;		CRCIP_SECONDBK_ADV_STEP_CMD_PTR = 1	 ;advance second kettle recirc caustic
+		FIRSTBK_EMPTY_FG_PTR = 0
+		GOTO ST7			;RECIRC CAUSTIC SECOND BK 
+		END
+
+	WAIT 1
+	GOTO ST6SS
+
+;==============================================================================
+;  RECIRC SECOND BK
+;===============================================================================
+ST7:
+
+	SA_STATE_PTR = 7			;Set sa state
+	GOSUB STATEINIT			;Initialize state 
+
+ST7LOOP:
+	SA_2_MESSAGE = "WAITING FOR KETTLE ADVANCE"
+	CRCIP_SECONDBK_ADV_STEP_CMD_PTR = 1	 ;advance second kettle recirc caustic
+	IF COMPAR(SECONDBK_SA_STATUS_PTR,"WAIT FOR OTHER BK",17,EQ) THEN
+		GOTO ST7LOOP
+
+	SA_2_MESSAGE = ""
+
+
+ST7SS:
+	;---------------------------------------------------------------------
+	; Steady state conditions
+	;---------------------------------------------------------------------
+	GOSUB CONTCHK
+
+	;---------------------------------------------------------------------
+	; Transition conditions
+	;---------------------------------------------------------------------
+	;when second kettle is empty, advance first kettle to line rinse
+	IF (SECONDBK_EMPTY_FG_PTR)&(!CRCIP_SECONDBK_ADV_STEP_CMD_PTR) THEN
+		BEGIN
+;		CRCIP_FIRSTBK_ADV_STEP_CMD_PTR = 1	 ;advance first kettle to recirc caustic
+		SECONDBK_EMPTY_FG_PTR = 0
+		GOTO ST8			;LINE RINSE FIRST BK 
+		END
+
+	WAIT 1
+	GOTO ST7SS
+;==============================================================================
+;  LINE RINSE FIRST BK
+;===============================================================================
+ST8:
+
+	SA_STATE_PTR = 8			;Set sa state
+	GOSUB STATEINIT			;Initialize state 
+
+ST8LOOP:
+	SA_2_MESSAGE = "WAITING FOR KETTLE ADVANCE"
+	CRCIP_FIRSTBK_ADV_STEP_CMD_PTR = 1	 ;advance first kettle to recirc caustic
+	IF COMPAR(FIRSTBK_SA_STATUS_PTR,"WAIT FOR OTHER BK",17,EQ) THEN
+		GOTO ST8LOOP
+	SA_2_MESSAGE = ""
+
+
+ST8SS:
+	;---------------------------------------------------------------------
+	; Steady state conditions
+	;---------------------------------------------------------------------
+	GOSUB CONTCHK
+
+	;---------------------------------------------------------------------
+	; Transition conditions
+	;---------------------------------------------------------------------
+	;when first kettle is empty, advance second kettle to line rinse
+	IF (FIRSTBK_EMPTY_FG_PTR)&(!CRCIP_FIRSTBK_ADV_STEP_CMD_PTR) THEN
+		BEGIN
+;		CRCIP_SECONDBK_ADV_STEP_CMD_PTR = 1	 ;advance second kettle recirc caustic
+		FIRSTBK_EMPTY_FG_PTR = 0
+		GOTO ST9			;LINE RINSE SECOND BK 
+		END
+
+	WAIT 1
+	GOTO ST8SS
+
+;==============================================================================
+;  LINE RINSE SECOND BK
+;===============================================================================
+ST9:
+
+	SA_STATE_PTR = 9			;Set sa state
+	GOSUB STATEINIT			;Initialize state 
+
+ST9LOOP:
+	SA_2_MESSAGE = "WAITING FOR KETTLE ADVANCE"
+	CRCIP_SECONDBK_ADV_STEP_CMD_PTR = 1	 ;advance second kettle recirc caustic
+	IF COMPAR(SECONDBK_SA_STATUS_PTR,"WAIT FOR OTHER BK",17,EQ) THEN
+		GOTO ST9LOOP
+	SA_2_MESSAGE = ""
+
+ST9SS:
+	;---------------------------------------------------------------------
+	; Steady state conditions
+	;---------------------------------------------------------------------
+	GOSUB CONTCHK
+
+	;---------------------------------------------------------------------
+	; Transition conditions
+	;---------------------------------------------------------------------
+	;when second kettle is empty, advance first kettle to add chase
+	IF (SECONDBK_EMPTY_FG_PTR)&(!CRCIP_SECONDBK_ADV_STEP_CMD_PTR) THEN
+		BEGIN
+;		CRCIP_FIRSTBK_ADV_STEP_CMD_PTR = 1	 ;advance first kettle to add chase
+		SECONDBK_EMPTY_FG_PTR = 0
+		GOTO ST10			;KETTLE RINSE FIRST BK 
+		END
+
+	WAIT 1
+	GOTO ST9SS
+
+
+;==============================================================================
+;  TANK RINSE FIRST BK
+;==============================================================================
+ST10:
+
+	SA_STATE_PTR = 10			;Set sa state
+	GOSUB STATEINIT			;Initialize state 
+
+ST10LOOP:
+	SA_2_MESSAGE = "WAITING FOR KETTLE ADVANCE"
+	CRCIP_FIRSTBK_ADV_STEP_CMD_PTR = 1	 ;advance first kettle to add chase
+	IF COMPAR(FIRSTBK_SA_STATUS_PTR,"WAIT FOR OTHER BK",17,EQ) THEN
+		GOTO ST10LOOP
+	SA_2_MESSAGE = ""
+
+
+ST10SS:
+	;---------------------------------------------------------------------
+	; Steady state conditions
+	;---------------------------------------------------------------------
+	GOSUB CONTCHK
+
+	;---------------------------------------------------------------------
+	; Transition conditions
+	;---------------------------------------------------------------------
+	;when first kettle is empty, advance second kettle to line rinse
+	IF (FIRSTBK_EMPTY_FG_PTR)&(!CRCIP_FIRSTBK_ADV_STEP_CMD_PTR) THEN
+		BEGIN
+;		CRCIP_SECONDBK_ADV_STEP_CMD_PTR = 1	 ;advance second kettle recirc caustic
+		FIRSTBK_EMPTY_FG_PTR = 0
+		GOTO ST11			;KETTLE RINSE SECOND BK 
+		END
+
+	WAIT 1
+	GOTO ST10SS
+
+
+
+;==============================================================================
+;  TANK RINSE SECOND BK
+;===============================================================================
+ST11:
+
+	SA_STATE_PTR = 11			;Set sa state
+	GOSUB STATEINIT			;Initialize state 
+
+
+ST11LOOP:
+	SA_2_MESSAGE = "WAITING FOR KETTLE ADVANCE"
+	CRCIP_SECONDBK_ADV_STEP_CMD_PTR = 1	 ;advance second kettle recirc caustic
+	IF COMPAR(SECONDBK_SA_STATUS_PTR,"WAIT FOR OTHER BK",17,EQ) THEN
+		GOTO ST11LOOP
+	SA_2_MESSAGE = ""
+
+
+ST11SS:
+	;---------------------------------------------------------------------
+	; Steady state conditions
+	;---------------------------------------------------------------------
+	GOSUB CONTCHK
+
+	;---------------------------------------------------------------------
+	; Transition conditions
+	;---------------------------------------------------------------------
+	;when second kettle is empty...
+	IF (SECONDBK_EMPTY_FG_PTR)&(!CRCIP_SECONDBK_ADV_STEP_CMD_PTR) THEN
+		BEGIN
+;		CRCIP_FIRSTBK_ADV_STEP_CMD_PTR = 1	 ;advance first kettle add chase
+		SECONDBK_EMPTY_FG_PTR = 0
+		FIRSTBK_EMPTY_FG_PTR = 0
+		GOTO ST12			;FIRST KETTLE CHASE
+		END
+
+
+	WAIT 1
+	GOTO ST11SS
+
+;==============================================================================
+;  FIRST KETTLE CHASE
+;===============================================================================
+ST12:
+
+	SA_STATE_PTR = 12			;Set sa state
+	GOSUB STATEINIT			;Initialize state 
+
+ST12LOOP:
+	SA_2_MESSAGE = "WAITING FOR KETTLE ADVANCE"
+	CRCIP_FIRSTBK_ADV_STEP_CMD_PTR = 1	 ;advance first kettle add chase
+	IF COMPAR(FIRSTBK_SA_STATUS_PTR,"WAIT FOR OTHER BK",17,EQ) THEN
+		GOTO ST12LOOP 
+
+	SA_2_MESSAGE = ""
+
+
+ST12SS:
+	;---------------------------------------------------------------------
+	; Steady state conditions
+	;---------------------------------------------------------------------
+	GOSUB CONTCHK
+
+	;---------------------------------------------------------------------
+	; Transition conditions
+	;---------------------------------------------------------------------
+	;when second kettle is empty...
+	IF (FIRSTBK_EMPTY_FG_PTR)&(!CRCIP_FIRSTBK_ADV_STEP_CMD_PTR) THEN
+		BEGIN
+;		CRCIP_SECONDBK_ADV_STEP_CMD_PTR = 1	 ;advance second kettle add chase
+		FIRSTBK_EMPTY_FG_PTR = 0
+		SECONDBK_EMPTY_FG_PTR = 0
+		GOTO ST13			;SECOND KETTLE CHASE
+		END
+
+
+	WAIT 1
+	GOTO ST12SS
+
+
+;==============================================================================
+;  SECOND KETTLE CHASE
+;===============================================================================
+ST13:
+
+	SA_STATE_PTR = 13			;Set sa state
+	GOSUB STATEINIT			;Initialize state 
+
+ST13LOOP:
+	SA_2_MESSAGE = "WAITING FOR KETTLE ADVANCE"
+	CRCIP_SECONDBK_ADV_STEP_CMD_PTR = 1	 ;advance second kettle add chase
+	IF COMPAR(SECONDBK_SA_STATUS_PTR,"WAIT FOR OTHER BK",17,EQ) THEN
+		GOTO ST13LOOP
+	SA_2_MESSAGE = ""
+
+
+ST13SS:
+	;---------------------------------------------------------------------
+	; Steady state conditions
+	;---------------------------------------------------------------------
+	GOSUB CONTCHK
+
+	;---------------------------------------------------------------------
+	; Transition conditions
+	;---------------------------------------------------------------------
+	;when second kettle is empty...
+	IF (SECONDBK_EMPTY_FG_PTR)&(!CRCIP_SECONDBK_ADV_STEP_CMD_PTR) THEN
+		BEGIN
+;		CRCIP_SECONDBK_ADV_STEP_CMD_PTR = 1	 ;advance second kettle add chase
+		SECONDBK_EMPTY_FG_PTR = 0
+		SECONDBK_EMPTY_FG_PTR = 0
+		GOTO ST14			;PHENO CHECK
+		END
+
+
+	WAIT 1
+	GOTO ST13SS
+
+
+;==============================================================================
+;  PHENO CHECK
+;===============================================================================
+ST14:
+
+	SA_STATE_PTR = 14			;Set sa state
+	GOSUB STATEINIT			;Initialize state 
+	PHENO_RESPONSE_SG = ""
+
+	SA_2_MESSAGE = "ENTER PHENO RESULT"
+
+	CRCIP_SECONDBK_ADV_STEP_CMD_PTR = 1	 ;advance second kettle add chase
+
+	;rma-temp... no way to sample runoff lines yet, just force to negative for now
+	PHENO_RESPONSE_SG = "N"		;rma-temp
+
+ST14SS:
+	;---------------------------------------------------------------------
+	; Steady state conditions
+	;---------------------------------------------------------------------
+	GOSUB CONTCHK
+
+	;---------------------------------------------------------------------
+	; Transition conditions
+	;---------------------------------------------------------------------
+
+	IF STRLEN(PHENO_RESPONSE_SG)>=1 THEN
+		BEGIN
+		CRCIP_PHENO_RESPONSE_PTR = PHENO_RESPONSE_SG
+		;negative pheno - advance both kettles to empty and ready
+		IF COMPAR(PHENO_RESPONSE_SG,"N",1,EQ) THEN
+			BEGIN
+			CRCIP_FIRSTBK_ADV_STEP_CMD_PTR = 1
+			CRCIP_SECONDBK_ADV_STEP_CMD_PTR = 1
+			GOTO ST15		;SYSTEM OFF
+			END
+		;positive pheno - advance only first kettle to line rinse
+		ELSE IF COMPAR(PHENO_RESPONSE_SG,"P",1,EQ) THEN
+			BEGIN
+			CRCIP_FIRSTBK_ADV_STEP_CMD_PTR = 1
+			GOTO ST8			;LINE RINSE FIRST BK
+			END
+		END
+		
+	WAIT 1
+	GOTO ST14SS
+
+
+;==============================================================================
+;  SYSTEM OFF
+;===============================================================================
+ST15:
+
+	SA_STATE_PTR = 15			;Set sa state
+	GOSUB STATEINIT			;Initialize state 
+
+	PHENO_RESPONSE_SG = ""
+	SA_MESSAGE = "CAUSTIC CIRCULATE DONE"
+
+	;start hot wort tank caustic brew now				;rma001
+	IF COMPAR(UNIT_SG,"BKCOM1",6,EQ) THEN				;rma001
+		HWT1_CAUSTIC_BREW_CIPCOM = 1						;rma001
+	ELSE IF COMPAR(UNIT_SG,"BKCOM2",6,EQ) THEN		;rma001
+		HWT2_CAUSTIC_BREW_CIPCOM = 1						;rma001
+
+
+ST15SS:
+	;---------------------------------------------------------------------
+	; Steady state conditions
+	;---------------------------------------------------------------------
+;	GOSUB CONTCHK
+
+	;---------------------------------------------------------------------
+	; Transition conditions
+	;---------------------------------------------------------------------
+	GOSUB HWTKCHK
+	GOTO DONE
+
+
+;==============================================================================
+; FAIL          - Handle Failure logic
+;
+;==============================================================================
+FAIL:
+	LAMP LOG_ADI,CRSA_ALARM,FLASH_RED              ;SKD light Flashing Red
+	LAST_SKID_COLOR = FLASH_RED 
+	SEQ_STATUS_PTR = "FAIL"
+	PRINT LOG_ADI,"CR/KO FAIL"   
+	PRINT LOG_ADI,"%p",SA_MESSAGE
+        
+	TIMEROFF STEP_TIMER
+
+;rma - check with vic about this...
+;	ASSIGN DEV_PTR_BKCOM = '82XXDO1'      ; Sequence Alarm Beacon
+;	FAIL_MSG = "82XXDO1 FAULTED"
+;	GOSUB OPENDEV                                                          
+
+	FAIL_FG = 1
+	GOTO HOLDSUB 
+
+
+;==============================================================================
+;  DONE
+;  - END of the main program
+;==============================================================================
+DONE:
+	TIMEROFF STEP_TIMER
+	TIMERCLR STEP_TIMER
+
+
+	SA_MESSAGE = "CR/KO CIP COMPLETE"
+	SEQ_MODE_SG     = ""
+
+CRESTOP:
+	SA_2_MESSAGE = ""
+	SA_STATUS_PTR = ""
+	SEQ_STATUS_PTR = ""
+	PHENO_RESPONSE_SG = ""
+	RESPONSE = ""
+	SA_STATE_PTR = 0
+
+	CR_CIP_RUN_PTR = 0
+	CR_CAUSTIC_BREW_PTR = 0
+
+	LAMP LOG_ADI,CRSA_ALARM,BLACK          ;SKD light OFF
+	LAST_SKID_COLOR = BLACK  
+
+	TRNGRPSNP "BH_LN1_CIP_REP" 
+
+	EXIT
+
+
+;===============================================================================
+;		PROGRAM INITIALIZATION (STANDARD SHELL SUBROUTINE)
+;===============================================================================
+SAINIT:
+
+	CRCIP_PHENO_RESPONSE_PTR = ""
+	PHENO_RESPONSE_SG = ""
+	SEQ_STATUS_PTR = ""
+	SA_STATE_PTR    = 0             ;CR CIP STATE = step 1
+	TIMEROFF CIP_TOTAL_MTIMER					
+	TIMERCLR CIP_TOTAL_MTIMER					
+
+		
+	RETURN
+
+
+;===============================================================================
+;		STATE INITIALIZATION (STANDARD SHELL SUBROUTINE)
+;===============================================================================
+STATEINIT:
+	GOSUB GETSASTATUS		;Get sa status
+	GOSUB TDINTOSTATE		;Transition into state
+	GOSUB STATEINITVAR		;Init variables
+	GOSUB CLRCMD			;Clear commands
+	
+	IF (SA_STATE_PTR >= 3) THEN					
+		TIMERON CIP_TOTAL_MTIMER					
+
+ 	RETURN
+
+;===============================================================================
+;		GET SA STATUS (STANDARD SHELL SUBROUTINE)
+;===============================================================================
+GETSASTATUS:
+
+	IF (SA_STATE_PTR = 1) THEN
+		SA_STATUS_PTR = "SETUP CHECK"
+	ELSE IF (SA_STATE_PTR = 2) THEN
+		SA_STATUS_PTR = "KO CAUSTIC FIRST BK"
+	ELSE IF (SA_STATE_PTR = 3) THEN
+		SA_STATUS_PTR = "KO CAUSTIC SECOND BK"
+	ELSE IF (SA_STATE_PTR = 4) THEN
+		SA_STATUS_PTR = "CSR RINSE FIRST BK"
+	ELSE IF (SA_STATE_PTR = 5) THEN
+		SA_STATUS_PTR = "CSR RINSE SECOND BK"
+	ELSE IF (SA_STATE_PTR = 6) THEN			 	
+		SA_STATUS_PTR = "RECIRC FIRST BK"
+	ELSE IF (SA_STATE_PTR = 7) THEN	 		
+		SA_STATUS_PTR = "RECIRC SECOND BK"
+	ELSE IF (SA_STATE_PTR = 8) THEN	  	
+		SA_STATUS_PTR = "LINE RINSE FIRST BK"
+	ELSE IF (SA_STATE_PTR = 9) THEN	  	
+		SA_STATUS_PTR = "LINE RINSE SECOND BK"
+	ELSE IF (SA_STATE_PTR = 10) THEN	  	
+		SA_STATUS_PTR = "TANK RINSE FIRST BK"
+	ELSE IF (SA_STATE_PTR = 11) THEN	  	
+		SA_STATUS_PTR = "TANK RINSE SECOND BK"
+	ELSE IF (SA_STATE_PTR = 12) THEN
+		SA_STATUS_PTR = "CHASE FIRST BK"
+	ELSE IF (SA_STATE_PTR = 13) THEN	  	
+		SA_STATUS_PTR = "CHASE SECOND BK"
+	ELSE IF (SA_STATE_PTR = 14) THEN	  	
+		SA_STATUS_PTR = "PHENO CHECK"
+	ELSE IF (SA_STATE_PTR = 15) THEN	  	
+		SA_STATUS_PTR = "SYSTEM OFF"
+	ELSE
+		BEGIN
+		FAIL_MSG = "INVALID STATE ENCOUNTERED"
+		GOTO FAIL
+		END
+	
+	RETURN
+
+;===============================================================================
+;		TRANSITION INTO STATE (STANDARD SHELL SUBROUTINE)
+;===============================================================================
+TDINTOSTATE:
+
+	;If entering new state
+	SA_TMP_INT = (STRLEN(SA_STATUS_PTR))
+	SA_EX1_FG = (COMPAR(SA_STATUS_PTR,LAST_SA_STATUS,SA_TMP_INT,NE))
+	IF (SA_EX1_FG | (SA_TMP_INT != STRLEN(LAST_SA_STATUS))) THEN
+		BEGIN
+		PRINT LOG_ADI, "TIME IN %p = %i MINUTES",LAST_SA_STATUS,MIN_STEP_TMR
+
+		IF (SA_STATE_PTR = 1) THEN	;If transitioning to system off
+			BEGIN
+			PRINT LOG_ADI, "CYCLE TIME = %i MINUTES",CIP_TOTAL_MTIMER
+			PRINT LOG_ADI, "TIME IN HOLD = %i MINUTES, TIME IN FAIL = %i MINUTES",HOLD_TMR,FAIL_TMR
+			END	  
+
+		TIMEROFF STEP_TIMER                  ; Reset step timer
+		TIMERCLR STEP_TIMER
+		TIMERON  STEP_TIMER
+		SA_MESSAGE = ""
+		SA_2_MESSAGE = ""
+		TIMERCLR MIN_STEP_TMR
+		LAST_SA_STATUS = SA_STATUS_PTR		;Save sa status
+		SEQ_STATUS_PTR = ""
+		FAIL_FG = 0
+		END
+	
+	
+	RETURN
+
+;===============================================================================
+;		CLEAR COMMANDS (STANDARD SHELL SUBROUTINE)
+;===============================================================================
+CLRCMD:
+
+	SC_SA_ATNS_CMD = 0
+	SC_SA_CONT_CMD = 0
+
+
+	RETURN
+
+
+;===============================================================================
+;		STATE INITIALIZE VARIABLES (STANDARD SHELL SUBROUTINE)
+;===============================================================================
+STATEINITVAR:
+
+
+	RETURN
+
+
+;==============================================================================
+; FIRST BREW KETTLE CHECK
+;==============================================================================
+FIRSTBKCHK:
+
+	FIRSTBK_OK_FG = 1
+
+	SA_MESSAGE = ""
+	IF COMPAR(FIRSTBK_SEQ_STATUS_PTR,"HOLD",4,EQ) | COMPAR(FIRSTBK_SEQ_STATUS_PTR,"FAIL",4,EQ) THEN
+		BEGIN
+		SA_MESSAGE = "FIRST BK HELD OR FAILED"
+		FIRSTBK_OK_FG = 0
+;		GOTO FAIL
+		END
+	ELSE IF (FIRSTBK_STATUS_DEVICE_PTR:DEV_STAT != S_2) THEN
+		BEGIN
+		SA_MESSAGE = "FIRST BK NOT IN CIP MODE"
+		FIRSTBK_OK_FG = 0
+;		GOTO FAIL 
+		END
+
+	RETURN
+
+
+;==============================================================================
+; SECOND BREW KETTLE CHECK
+;==============================================================================
+SECONDBKCHK:
+
+	SECONDBK_OK_FG = 1
+	SA_MESSAGE = ""
+	IF COMPAR(SECONDBK_SEQ_STATUS_PTR,"HOLD",4,EQ) | COMPAR(SECONDBK_SEQ_STATUS_PTR,"FAIL",4,EQ) THEN
+		BEGIN
+		SA_MESSAGE = "SECOND BK HELD OR FAILED"
+		SECONDBK_OK_FG = 0
+		END
+	ELSE IF (SECONDBK_STATUS_DEVICE_PTR:DEV_STAT != S_2) THEN
+		BEGIN
+		SA_MESSAGE = "SECOND BK NOT IN CIP MODE"
+		SECONDBK_OK_FG = 0
+		END
+
+	RETURN
+
+
+;==============================================================================
+; SECOND BREW KETTLE CHECK
+;==============================================================================
+HWTKCHK:
+
+	HWTK_OK_FG = 1
+
+	IF (HWT_STATUS_DEVICE_PTR:DEV_STAT != S_2) THEN
+		BEGIN
+		SA_MESSAGE = "HWTK NOT IN CIP MODE"
+		HWTK_OK_FG = 0
+		END
+
+	RETURN
+
+;==============================================================================
+; INTERRUPT SUBORUTINES
+;==============================================================================
+;===============================================================================
+;  HOLDSUB
+;
+;===============================================================================
+HOLDSUB:
+
+	STACKCLR
+
+	LAMP LOG_ADI,CRSA_ALARM,FLASH_RED      ;SKD light Flashing Red
+	LAST_SKID_COLOR = FLASH_RED  
+
+	PRINT LOG_ADI,"CR/KO IN HOLD STATE"     ;LMG001
+
+	IF (FAIL_FG) THEN
+		SEQ_STATUS_PTR = "FAIL"
+	ELSE SEQ_STATUS_PTR = "HOLD"
+        
+	TIMEROFF STEP_TIMER
+	TIMEROFF CYCLE_TIMER
+
+	GOSUB HOLDVESSELS 
+
+HOLDSS:
+	;----- Check Emergency Stop flag first -----
+	IF (CR_ESTOP_PTR = 1) THEN
+		BEGIN
+		CR_ESTOP_PTR    = 0
+		SA_STATUS_PTR   = "CR/KO ESTOP"
+		SA_MESSAGE  = "CR CIP EMERGENCY STOP"
+		SA_2_MESSAGE = ""
+		GOTO CRESTOP
+		END
+
+	;----- Check for Operator Continue command -----
+	IF (SC_SA_CONT_CMD = 1) THEN
+		BEGIN
+		SC_SA_CONT_CMD = 0
+		FAIL_FG = 0
+		SEQ_STATUS_PTR = ""
+		GOSUB CONTVESSELS 
+		GOTO CONTRETURN
+		END
+
+	IF (SC_SA_ATNS_CMD) THEN
+		GOSUB CALCATNS
+
+
+	WAIT 1
+	GOTO HOLDSS
+
+
+
+;==============================================================================
+; NON INTERRUPT SUBROUTINES
+;==============================================================================
+;===============================================================================
+; CALCATNS      - In response to an operator ATNS command, calculate the next
+;                 CR state and transfer to that state.
+;
+; Reference:    TB.1.1.4.1.4.1.40 CALCULATE NEW CR STATE
+;===============================================================================
+CALCATNS:
+
+		  ;-------------------------------------------------------
+		  ; SETUP CHECK is never allowed to be bypassed or 
+		  ; advanced to by the ATNS command.
+		  ;-------------------------------------------------------
+
+	SC_SA_ATNS_CMD = 0
+
+  	IF (SA_STATE_PTR = 1) THEN	;Last state number
+		SA_STATE_PTR = 1
+  	ELSE IF (SA_STATE_PTR >= 14) THEN	;Last state number
+		SA_STATE_PTR = 1
+	ELSE
+		SA_STATE_PTR = SA_STATE_PTR + 1
+
+	GOSUB GETSASTATUS
+	RETURN
+
+
+;===============================================================================
+;  CONTCHK
+;===============================================================================
+CONTCHK:
+
+	GOSUB FIRSTBKCHK
+	GOSUB SECONDBKCHK
+	GOSUB HWTKCHK
+	GOSUB VSSLCHK
+ 
+	IF '8230MW1':DIN_VAL != 1 THEN
+		BEGIN
+		SA_MESSAGE = "CAUSTIC TANK MANWAY OPEN"
+		GOTO FAIL
+		END
+
+	IF COMPAR(UNIT_SG,"BKCOM1",6,EQ) THEN
+		BEGIN
+		GOSUB PROXCHK1
+		GOSUB HVCHK1 
+		END
+	ELSE IF COMPAR(UNIT_SG,"BKCOM2",6,EQ) THEN
+		BEGIN
+		GOSUB PROXCHK2
+		GOSUB HVCHK2 
+		END
+
+	IF CIP_BUSY_CIPCOM = 1 THEN 
+		BEGIN
+		SA_MESSAGE = "CIP SYSTEM BUSY FAILURE"
+		GOTO FAIL
+		END
+
+	RETURN
+
+
+;===============================================================================
+;		START FIRST BREW KETTLE CIP PROGRAM
+;===============================================================================
+STARTFIRSTBK:
+
+	SA_MESSAGE = "STARTING FIRST BK CIP PGM"
+	IF COMPAR(UNIT_SG,"BKCOM1",6,EQ) THEN
+		BEGIN
+		BK1_CAUSTIC_BREW_CIPCOM = 1	  ;cipcom flag variable
+		CRCIP_BK1_RUN_CMD_ALLOF1 = 1
+		WAITUNTIL (PGMSTAT("BKCRSA","BKETT1") != NOT_RUNNING) COUNT TMO_DELAY, FRSTBKFAIL 
+		END
+	ELSE IF COMPAR(UNIT_SG,"BKCOM2",6,EQ) THEN
+		BEGIN
+		BK3_CAUSTIC_BREW_CIPCOM = 1		;cipcom flag variable
+		CRCIP_BK3_RUN_CMD_ALLOF2 = 1
+		WAITUNTIL (PGMSTAT("BKCRSA","BKETT3") != NOT_RUNNING) COUNT TMO_DELAY, FRSTBKFAIL 
+		END
+
+	SA_MESSAGE = "WAIT: CONTINUE FIRST BKETT"
+	WAITUNTIL COMPAR(FIRSTBK_SA_STATUS_PTR,"KO CAUSTIC",10,EQ)
+	SA_MESSAGE = ""
+	RETURN
+
+FRSTBKFAIL:
+	SA_MESSAGE = "FIRST BK FAIL START"
+	GOTO FAIL 
+
+
+;===============================================================================
+;		START SECOND BREW KETTLE CIP PROGRAM
+;===============================================================================
+STARTSECONDBK:
+
+	SA_MESSAGE = "STARTING SECOND BK CIP PGM"
+
+	IF COMPAR(UNIT_SG,"BKCOM1",6,EQ) THEN
+		BEGIN
+		BK2_CAUSTIC_BREW_CIPCOM = 1
+		CRCIP_BK2_RUN_CMD_ALLOF1 = 1
+		WAITUNTIL (PGMSTAT("BKCRSA","BKETT2") != NOT_RUNNING) COUNT TMO_DELAY, SCNDBKFAIL 
+		END
+	ELSE IF COMPAR(UNIT_SG,"BKCOM2",6,EQ) THEN
+		BEGIN
+		BK4_CAUSTIC_BREW_CIPCOM = 1
+		CRCIP_BK4_RUN_CMD_ALLOF2 = 1
+		WAITUNTIL (PGMSTAT("BKCRSA","BKETT4") != NOT_RUNNING) COUNT TMO_DELAY, SCNDBKFAIL 
+		END
+
+	SA_MESSAGE = "WAIT: CONTINUE SECOND BKETT"
+	WAITUNTIL COMPAR(SECONDBK_SA_STATUS_PTR,"KO CAUSTIC",10,EQ)
+	SA_MESSAGE = ""
+	RETURN
+
+SCNDBKFAIL:
+	SA_MESSAGE = "SECOND BK FAIL START"
+	GOTO FAIL 
+
+
+
+;==============================================================================
+;  ERRSUB       - Subroutine to handle program run-time error
+;==============================================================================
+;
+;       ERROR_NUM:      Error number storage
+;       ERROR_LIN:      Error line storage
+;==============================================================================
+ERRSUB: 
+	STACKCLR
+
+	ERROR_NUM = ABS(ERRNUM())
+	ERROR_LIN = ERRLIN()
+
+
+	PRINT LOG_ADI, "*** ERROR %i AT LINE %i  ***",ERROR_NUM,ERROR_LIN
+
+		  ;--------------------------------------------------------------------
+		  ; If error is CRTICAL, message has been printed, blink SKD light and
+		  ; wait for engineer to correct problem.
+		  ;--------------------------------------------------------------------
+
+	PRINT LOG_ADI, "** SABL PROG. FAILED NEED CORRECTIVE ACTION**"
+	LAMP CON_ADI,SABL_ALARM,FLASH_RED
+	LAST_SKID_COLOR = FLASH_RED  
+	SA_MESSAGE = "CRCIPSA1 PROGRAM FAILED" 
+        
+	GOTO FAIL
+	WAITUNTIL (0)
+		  
+
+
+;===============================================================================
+;  HVCHK1 - Check the STATUS of the hand valves on the Caustic Recirc /
+;          Knockout lines and 170 CIP system.
+;===============================================================================
+HVCHK1:
+
+;	IF !AND('8203HV11':DEV_STAT,S_1) THEN
+;		BEGIN
+;		SA_MESSAGE = "8203HV11 LT1 HVTRB2LT NOT OPEN"
+;		GOTO FAIL
+;		END
+;
+;	IF !AND('8203HV12':DEV_STAT,S_1) THEN
+;		BEGIN
+;		SA_MESSAGE = "8203HV12 HV TRB2CSR NOT OPEN"
+;		GOTO FAIL
+;		END
+;
+;rma - only after the ltun is done
+;	IF !AND(CSS_LT_MASHLINE_HV_PTR:DEV_STAT,S_0) THEN
+;		BEGIN
+;		SA_MESSAGE = "8203HV19/29 HV NOT CLSD"
+;		GOTO FAIL
+;		END
+;
+;	IF !AND(TRUB_TO_LTUN_HV_PTR:DEV_STAT,S_0) THEN
+;		BEGIN
+;		SA_MESSAGE = "8203HV13/23 TRUB HV NOT CLSD"
+;		GOTO FAIL
+;		END
+
+
+;mrp001	IF !AND('8215HV15':DEV_STAT,S_1) THEN
+;mrp001		BEGIN
+;mrp001		SA_MESSAGE = "8215HV15 HV WRTPMP1 NOT OPEN"
+;mrp001		GOTO FAIL
+;		END
+
+;mrp	IF !AND('8215HV16':DEV_STAT,S_1) & CR_ENA_ALLOF_PTR THEN  ;VCMHHH
+;		BEGIN
+;		SA_MESSAGE = "8215HV16 HV CAUSRECIR NOT OPEN"
+;		GOTO FAIL
+;		END
+
+;mrp001	IF !AND('8215HV11':DEV_STAT,S_0) & CR_ENA_ALLOF_PTR THEN
+;mrp001		BEGIN
+;mrp001		SA_MESSAGE = "8215HV11 HVWRT2COLR1 NOT CLSD"
+;mrp001;		GOTO FAIL
+;mrp001		END
+
+;mrp001	IF !AND('8215HV11':DEV_STAT,S_1) & (!CR_ENA_ALLOF_PTR) THEN
+;mrp001		BEGIN
+;mrp001		SA_MESSAGE = "8215HV11 HVWRT2COLR1 NOT OPEN"
+;mrp001		GOTO FAIL
+;mrp001		END
+
+;mrp001	IF !AND('8215HV13':DEV_STAT,S_0) & CR_ENA_ALLOF_PTR THEN
+;mrp001		BEGIN
+;mrp001		SA_MESSAGE = "8215HV13 HVWRT2YEST NOT CLSD"
+;mrp001		GOTO FAIL
+;mrp001		END
+
+;mrp001	IF !AND('8215HV13':DEV_STAT,S_1) & (!CR_ENA_ALLOF_PTR) THEN
+;mrp001		BEGIN
+;mrp001		SA_MESSAGE = "8215HV13 HVWRT2YEST NOT OPEN"
+;mrp001		GOTO FAIL
+;mrp001		END
+
+	IF !AND('8215HV12':DEV_STAT,S_0) & CR_ENA_ALLOF_PTR THEN
+		BEGIN
+		SA_MESSAGE = "8215HV12 HVWRTCOLR1 NOT CLSD"
+		GOTO FAIL
+		END
+
+	IF !AND('8215HV12':DEV_STAT,S_1) & (!CR_ENA_ALLOF_PTR) THEN
+		BEGIN
+		SA_MESSAGE = "8215HV12 HVWRTCOLR1 NOT OPEN"
+		GOTO FAIL
+		END
+
+	RETURN 
+
+;===============================================================================
+;  HVCHK2 - Check the STATUS of the hand valves on the Caustic Recirc /
+;          Knockout lines and 170 CIP system.
+;===============================================================================
+HVCHK2:
+
+;	IF !AND('8203HV21':DEV_STAT,S_1) THEN
+;		BEGIN
+;		SA_MESSAGE = "8203HV21 LT1 HVTRB2LT NOT OPEN"
+;		GOTO FAIL
+;		END
+
+;	IF !AND('8203HV22':DEV_STAT,S_1) THEN
+;		BEGIN
+;		SA_MESSAGE = "8203HV22 HV TRB2CSR NOT OPEN"
+;		GOTO FAIL
+ ;  	END
+
+;rma - only after the ltun is done
+;	IF !AND(CSS_LT_MASHLINE_HV_PTR:DEV_STAT,S_0) THEN
+;		BEGIN
+;		SA_MESSAGE = "8203HV19/29 HV NOT CLSD"
+;		GOTO FAIL
+;		END
+;
+;	IF !AND(TRUB_TO_LTUN_HV_PTR:DEV_STAT,S_0) THEN
+;		BEGIN
+;		SA_MESSAGE = "8203HV13/23 TRUB HV NOT CLSD"
+;		GOTO FAIL
+;		END
+
+;mrp001	IF !AND('8215HV24':DEV_STAT,S_1) THEN
+;mrp001		BEGIN
+;mrp001		SA_MESSAGE = "8215HV24 HV WRTPMP1 NOT OPEN"
+;mrp001		GOTO FAIL
+;mrp001		END
+
+;mrp001	IF !AND('8215HV25':DEV_STAT,S_1) & CR_ENA_ALLOF_PTR THEN
+;mrp001		BEGIN
+;mrp001		SA_MESSAGE = "8215HV25 HV CAUSRECIR NOT OPEN"
+;mrp001		GOTO FAIL
+;mrp001		END
+
+;rmaxxx recirc turnback in right position, this hv does not matter
+;mrp001	IF !AND('8215HV21':DEV_STAT,S_1) & (!CR_ENA_ALLOF_PTR) THEN
+;mrp001		BEGIN
+;mrp001		SA_MESSAGE = "8215HV21 HVWRT2COLR1 NOT OPEN"
+;mrp001		GOTO FAIL
+;mrp001		END
+
+;mrp001	IF !AND('8215HV23':DEV_STAT,S_0) & CR_ENA_ALLOF_PTR THEN
+;mrp001		BEGIN
+;mrp001		SA_MESSAGE = "8215HV23 HVWRT2YEST NOT CLSD"
+;mrp001		GOTO FAIL
+;mrp001  	END
+
+;	IF !AND('8215HV23':DEV_STAT,S_1) & (!CR_ENA_ALLOF_PTR) THEN
+;		BEGIN
+;		SA_MESSAGE = "8215HV23 HVWRT2YEST NOT OPEN"
+;		GOTO FAIL
+;		END
+
+	IF !AND('8215HV22':DEV_STAT,S_0) & CR_ENA_ALLOF_PTR THEN
+		BEGIN
+		SA_MESSAGE = "8215HV22 HVWRTCOLR1 NOT CLSD"
+		GOTO FAIL
+		END
+
+	IF !AND('8215HV22':DEV_STAT,S_1) & (!CR_ENA_ALLOF_PTR) THEN
+		BEGIN
+		SA_MESSAGE = "8215HV22 HVWRTCOLR1 NOT OPEN"
+		GOTO FAIL
+		END
+
+	RETURN 
+
+;===============================================================================
+;  INIT - Initializes logic that is performed at the beginning of each step.
+;===============================================================================
+INIT:
+	LAMP LOG_ADI,CRSA_ALARM,GREEN          ;SKD light GREEN
+	LAST_SKID_COLOR = GREEN 
+	SA_MESSAGE   = ""
+	SA_2_MESSAGE  = ""
+	SEQ_STATUS_PTR   = ""                       ;Display SEQ status on graphic
+
+	RETURN
+
+
+
+;===============================================================================
+;  PROXCHK - Check the proximity switches on the SPP82, SPP83,and SPP84 panels.
+;===============================================================================
+PROXCHK1:
+
+;rma - check on this...
+;	IF !AND('8245PX1':DGR_VAL,B_5) THEN     ;8245PX51
+;		BEGIN
+;		SA_MESSAGE = "8245PX1 CSR TRBPMP NOT CONNCTD"
+;		GOTO FAIL
+;		END
+                                                                
+	IF AND('8235PXB1':DGR_VAL,B_0) THEN     ;8235PX25
+		BEGIN
+		SA_MESSAGE = "8235PXB1 CSS TO MM1 CONNECTED"
+		GOTO FAIL
+		END
+
+	IF AND('8235PXA1':DGR_VAL,B_1) THEN     ;8235PX27
+		BEGIN
+		SA_MESSAGE = "8235PXA1 CSSTOLQGRNDRY CONNCTD"
+		GOTO FAIL
+		END
+
+;rma - only after ltun is finished caustic brew
+;	IF AND('8235PXA1':DGR_VAL,B_3) THEN     ;8235PX31
+;		BEGIN
+;		SA_MESSAGE = "8235PXA1 CSS TO LT/SWT CONNCTD"
+;		GOTO FAIL
+;  	END
+
+
+	IF AND('8235PXA1':DGR_VAL,B_5) THEN     ;8235PX35
+		BEGIN
+		SA_MESSAGE = "8235PXA1 CSSTOCENTFEED CONNCTD"
+		GOTO FAIL
+		END
+
+	IF AND('8235PXA1':DGR_VAL,B_6) THEN     ;8235PX37
+		BEGIN
+		SA_MESSAGE = "8235PXA1 CSS TO HWT1 CONNECTED"
+		GOTO FAIL
+		END
+
+	IF AND('8235PXB1':DGR_VAL,B_1) THEN     ;8235PX39
+		BEGIN
+		SA_MESSAGE = "8235PXB1 CSS TO CC1 CONNECTED"
+		GOTO FAIL
+		END
+
+	IF AND('8245PX1':DGR_VAL,B_0) THEN      ;8245PX41
+		BEGIN
+		SA_MESSAGE = "8245PX1 CSR FRM CC/MM CONNECTD"
+		GOTO FAIL
+		END
+
+	IF AND('8245PX1':DGR_VAL,B_1) THEN      ;8245PX43
+		BEGIN
+		SA_MESSAGE = "8245PX1 CSR FRM LIQUR CONNECTD"
+		GOTO FAIL
+		END
+
+;	IF AND('8245PX1':DGR_VAL,Bhold4) THEN      ;8245PX49
+;		BEGIN
+;		SA_MESSAGE = "8245PX1 CSR FRM SWT1 CONNECTED"
+;		GOTO FAIL
+;		END
+
+  IF CR_ENA_ALLOF_PTR THEN
+	BEGIN
+	IF AND('8215PX11':DGR_VAL,B_1) THEN     ;8215PX1
+		BEGIN
+		SA_MESSAGE = "8215PX11 WRTCLR1 YSTRM CONNCTD"
+		GOTO FAIL
+		END
+
+	IF AND('8215PX11':DGR_VAL,B_2) THEN     ;8215PX3
+		BEGIN
+		SA_MESSAGE = "8215PX11 WRTCLR RECIRC CONNCTD"
+		GOTO FAIL
+		END
+
+	IF AND('8215PX11':DGR_VAL,B_4) THEN     ;8215PX7
+		BEGIN
+		SA_MESSAGE = "8215PX11 WRT FRM HWT1 CONNECTD"
+		GOTO FAIL
+		END
+
+	IF AND('8215PX11':DGR_VAL,B_0) THEN     ;8215PX9
+		BEGIN
+		SA_MESSAGE = "8215PX11 WRTCLR TO CSS CONNCTD"
+		GOTO FAIL
+		END
+	END  
+  ELSE
+	BEGIN
+	IF AND('8215PX11':DGR_VAL,B_3) THEN     ;8215PX1
+		BEGIN
+		SA_MESSAGE = "8215PX3 BK CIRC CONNCTD"
+		GOTO FAIL
+		END
+
+	IF AND('8215PX11':DGR_VAL,B_2) THEN     ;8215PX3
+		BEGIN
+		SA_MESSAGE = "8215PX11 WRTCLR RECIRC CONNCTD"
+		GOTO FAIL
+		END
+
+	IF AND('8215PX11':DGR_VAL,B_0) THEN     ;8215PX9
+		BEGIN
+		SA_MESSAGE = "8215PX11 WRTCLR TO CSS CONNCTD"
+		GOTO FAIL
+		END
+
+;	IF !AND('8215PX11':DGR_VAL,B_1) THEN     ;
+;		BEGIN
+;		SA_MESSAGE = "8215PX11 WRTCLR TO YSTRM OFF"
+;		GOTO FAIL
+;mrp		END
+
+	IF AND('8215PX11':DGR_VAL,B_0) THEN     ;8215PX9
+		BEGIN
+		SA_MESSAGE = "8215PX11 WRTCLR TO CSS CONNCTD"
+		GOTO FAIL
+		END
+	END
+
+
+
+	RETURN
+
+;===============================================================================
+;  PROXCHK LINE 2- Check the proximity switches on the SPP82, SPP83,and SPP84 panels.
+;===============================================================================
+PROXCHK2:
+
+;rma 
+;	IF !AND('8245PX':DGR_VAL,B_5) THEN	;8245PX52
+;		BEGIN
+;		SA_MESSAGE = "8245PX CSR TRBPMP NOT CONNECTD"
+;		GOTO FAIL
+;		END
+
+
+	IF AND('8235PXB':DGR_VAL,B_0) THEN	;8235PX26
+		BEGIN
+		SA_MESSAGE = "8235PXB CSS TO MM2 CONNECTED"
+		GOTO FAIL
+		END
+
+	IF AND('8235PXA':DGR_VAL,B_1) THEN	;8235PX28
+		BEGIN
+		SA_MESSAGE = "8235PXA CSSTOLQGRNDRY CONNECTD"
+		GOTO FAIL
+		END
+
+;rma - ltun still in cip mode...
+;	IF AND('8235PXA':DGR_VAL,B_3) THEN	;8235PX32
+;		BEGIN
+;		SA_MESSAGE = "8235PXA CSS TO LT/SWT CONNECTD"
+;	   GOTO FAIL
+;		END
+
+	IF AND('8235PXA':DGR_VAL,B_5) THEN	;8235PX36
+		BEGIN
+		SA_MESSAGE = "8235PXA CSSTOCENTFEED CONNECTD"
+		GOTO FAIL
+		END
+
+	IF AND('8235PXA':DGR_VAL,B_6) THEN	;8235PX38
+		BEGIN
+		SA_MESSAGE = "8235PXA CSS TO HWT2 CONNECTED"
+		GOTO FAIL
+		END
+
+	IF AND('8235PXB':DGR_VAL,B_1) THEN	;8235PX40
+		BEGIN
+		SA_MESSAGE = "8235PXB CSS TO CC2 CONNECTED"
+		GOTO FAIL
+		END
+
+	IF AND('8245PX':DGR_VAL,B_0) THEN  	;8245PX42
+		BEGIN
+		SA_MESSAGE = "8245PX CSR FRM CC/MM CONNECTED"
+		GOTO FAIL
+		END
+
+	IF AND('8245PX':DGR_VAL,B_1) THEN	;8245PX44
+		BEGIN
+		SA_MESSAGE = "8245PX CSR FRM LIQUR CONNECTED"
+		GOTO FAIL
+		END
+
+;	IF AND('8245PX':DGR_VAL,B_4) THEN	;8245PX50
+;		BEGIN
+;		SA_MESSAGE = "8245PX CSR FRM SWT2 CONNECTED"
+;		GOTO FAIL
+;		END
+
+  IF CR_ENA_ALLOF_PTR THEN
+	BEGIN
+;JMS001	IF !AND('8215PX':DGR_VAL,B_3) THEN	;8215PX6
+;JMS001		BEGIN
+;JMS001		SA_MESSAGE = "8215PX FRMWRTPMP2 NOT CONNECTD"
+;JMS001		GOTO FAIL
+;JMS001		END
+
+	IF AND('8215PX':DGR_VAL,B_2) THEN	;8215PX4
+		BEGIN
+		SA_MESSAGE = "8215PX WRTCOLR RECIRC CONNECTD"
+		GOTO FAIL
+		END
+
+	IF AND('8215PX':DGR_VAL,B_4) THEN	;8215PX8
+		BEGIN
+		SA_MESSAGE = "8215PX WRT FRM HWT2 CONNECTED"	
+		GOTO FAIL
+		END
+
+	IF AND('8215PX':DGR_VAL,B_0) THEN	;8215PX10
+		BEGIN
+		SA_MESSAGE = "8215PX WRTCOLR TO CSS CONNECTD"
+		GOTO FAIL
+		END
+	  END
+	ELSE
+	BEGIN
+;JMS001	IF AND('8215PX':DGR_VAL,B_3) THEN	;8215PX6
+;JMS001		BEGIN
+;JMS001		SA_MESSAGE = "8215PX6 FRMWRTPMP2 CONNECTD"
+;JMS001		GOTO FAIL
+;JMS001		END
+
+	IF AND('8215PX':DGR_VAL,B_2) THEN	;8215PX4
+		BEGIN
+		SA_MESSAGE = "8215PX4 WRTCOLR RECIRC CONNECTD"
+		GOTO FAIL
+		END
+
+;	IF AND('8215PX':DGR_VAL,B_4) THEN	;8215PX8
+;		BEGIN
+;		SA_MESSAGE = "8215PX WRT FRM HWT2 CONNECTED"	
+;		GOTO FAIL
+;		END
+
+	IF AND('8215PX':DGR_VAL,B_0) THEN	;8215PX10
+		BEGIN
+		SA_MESSAGE = "8215PX WRTCOLR TO CSS CONNECTD"
+		GOTO FAIL
+		END
+	  END
+	RETURN
+
+
+;===============================================================================
+;  VSSLCHK - Check the Vessel Status for CIP mode on all vessels.
+;===============================================================================
+VSSLCHK:
+
+	IF AND(CC_STATUS_DEVICE_PTR:DEV_STAT,S_2) THEN
+		BEGIN
+		SA_MESSAGE = "CEREAL COOKER IN CIP"
+		GOTO FAIL
+		END
+
+	IF AND(MM_STATUS_DEVICE_PTR:DEV_STAT,S_2) THEN
+		BEGIN
+		SA_MESSAGE = "MASH MIXER IN CIP"
+		GOTO FAIL
+		END
+
+	IF !AND(WC_STATUS_DEVICE_PTR:DEV_STAT,S_2) THEN
+		BEGIN
+		SA_MESSAGE = "WORT COOLER NOT IN CIP"
+		GOTO FAIL
+		END
+
+
+	RETURN
+
+;===============================================================================
+;  HOLD VESSELS 
+;===============================================================================
+HOLDVESSELS:
+	IF COMPAR(UNIT_SG,"BKCOM1",6,EQ) THEN
+		BEGIN
+		CRCIP_BK1_HOLD_CMD_ALLOF1 = 1
+		CRCIP_BK2_HOLD_CMD_ALLOF1 = 1
+		END
+	ELSE IF COMPAR(UNIT_SG,"BKCOM2",6,EQ) THEN
+		BEGIN
+		CRCIP_BK3_HOLD_CMD_ALLOF2 = 1
+		CRCIP_BK4_HOLD_CMD_ALLOF2 = 1
+		END
+	RETURN
+
+;===============================================================================
+;  CONTINUE VESSELS 
+;===============================================================================
+CONTVESSELS:
+	IF COMPAR(UNIT_SG,"BKCOM1",6,EQ) THEN
+		BEGIN
+		CRCIP_BK1_CONT_CMD_ALLOF1 = 1
+		CRCIP_BK2_CONT_CMD_ALLOF1 = 1
+		END
+	ELSE IF COMPAR(UNIT_SG,"BKCOM2",6,EQ) THEN
+		BEGIN
+		CRCIP_BK3_CONT_CMD_ALLOF2 = 1
+		CRCIP_BK4_CONT_CMD_ALLOF2 = 1
+		END
+	RETURN
+
+;;===============================================================================
+; END OF PROGRAM
+;===============================================================================
+		  NOP
+		  END                     ; end program
+
