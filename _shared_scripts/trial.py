@@ -29,15 +29,15 @@ global inc_file
 inc_file = ""
 global overall
 overall = []
-
-def get_p_name(line):
+##global varibales are used to keep track of keys for the dictonary and logical statements that need a live varibale from other functions when recursing 
+def get_p_name(line):            ##grabs the program name
     global p_name
     p_pat = samplePaths.grab_regex()[0]
     p_match = re.findall(p_pat, line, re.IGNORECASE)
     if p_match != []:
         p_name = p_match[0]
 
-def getFile(str):
+def getFile(str):     ##when there is a include file it createa a path for it 
     global file_l
     global count
     global newFile_bool
@@ -50,7 +50,7 @@ def getFile(str):
     file_l.append(fileCopy)
     return fileCopy
 
-def checkContent(line):
+def checkContent(line):             #checks to see if everything has been found content wise(unit,runit, common)
     global unit_boo
     holder = []
     u_pat = samplePaths.grab_regex()[1]
@@ -67,7 +67,7 @@ def checkContent(line):
     for i in r_match:
         holder.append(i)
     return holder
-def getContent(line):
+def getContent(line):  ##scrapes for the content on the line that is provided
     global unit_boo
     global common_boo
     global runit_boo
@@ -89,7 +89,7 @@ def getContent(line):
         if l not in final:
             final.append(l)
     return l
-def include_check(line):
+def include_check(line):  ## checkes to see if there a include file in the line that is provided
     if ("#include" in line and unit_boo == False):
         inc_pat = samplePaths.grab_regex()[4]
         inc_match = re.findall(inc_pat, line, re.IGNORECASE)
@@ -107,11 +107,11 @@ def test(file):
     inc_file = file
     try:
         openFile = open(file, "r")
-        lines = openFile.readlines()
+        lines = openFile.readlines()                        ##opens file. if it cant open an error will pop up
     except OSError:
         return "link didnt work"
     
-    num = 0
+    num = 0              ##mod operation will be applied on here to see when a commnet block starts and ends (0 = no comment block; 1 = line is in comment block)
     check = []
     include = ""
     for line in lines:
@@ -127,9 +127,9 @@ def test(file):
             
         if num%2 == 0:
             if check != []:
-                if "#include" in check[0] and unit_boo == False:
+                if "#include" in check[0] and unit_boo == False: ##no code can run before the UNIT command. if a include is running then it means that the UNIT is in the include file
                     include = include_check(check[0])
-                    test(include)
+                    test(include)  ##starts the recursion proccess of getting the content by going into the include file
                     return
                 else:
                     getContent(check[0])
@@ -141,7 +141,9 @@ def test(file):
                 return
            
 
-def cleanup(list, bool):
+def cleanup(list, bool): ##this takes the correct comment and then removes comments that might follow it; there are many different cases; bool is used as a switch where the funciton will run normally
+                        ##when false but if it is true then it will know it is looking at the program name. Since program name is a comment unlike the other cases that are runable code, this
+                        ##this switch will delete comments before the program name and after. If it is runable code then it only has to clean comments that follow the code
     global p_name
     temp_list = []
     for i in list:
@@ -166,7 +168,7 @@ def cleanup(list, bool):
             temp_list[i] = " ".join(temp_list[i][0:slash].split())
     return temp_list
 
-def inlclude_add(line):
+def inlclude_add(line): ##adds all include files to the include list so it can be added to the dictonary later
     global include
     if "#include" in line:
         inc_pat = samplePaths.grab_regex()[6]   
@@ -179,14 +181,14 @@ h_boo = False
 global inc_boo
 inc_boo = False
 
-def get_file_name(str):
+def get_file_name(str):##gets the file name of whatever file it is in during the recursion for the dictonary 
     slash_count = 0
     for i in range (len(str)):
         if ("\\" in str[i:i+1]):
             slash_count = i
     return str[slash_count+1::]
 
-def dict_convert(list):
+def dict_convert(list):     ##takes in a list of content(runit, unit, common, include, program name) and then converts them to dictonary 
     global common_boo
     global runit_boo
     global fileName
@@ -221,17 +223,17 @@ def dict_convert(list):
             dict[name]["H:"].append(i[9::])
     return dict
 
-if __name__ == '__main__':
+if __name__ == '__main__': ##runs the code
     start = time.time()
     print("start timer")
-    dict_list = [samplePaths.grab_dict_path()[0], samplePaths.grab_dict_path()[1], samplePaths.grab_dict_path()[2]]
+    dict_list = [samplePaths.grab_dict_path()[0], samplePaths.grab_dict_path()[1], samplePaths.grab_dict_path()[2]]  ##there are multiple directories that need to be scrapped so this is used to go through them all
     overallCount = 0
     for directory in dict_list:
         files = Path(directory).glob('*')
         print(files)
         for fileName_in in files:
             overallCount += 1
-            unit_boo = False
+            unit_boo = False            ##all these staements are resetting the globals variablaes for every new orginial file that is accessed. any include files that are acessed will use the live global vars that were active prior to the start of the recursion
             runit_boo = False
             common_boo = False
             p_bool = False
@@ -251,7 +253,9 @@ if __name__ == '__main__':
             test(Path(escaped))
             final = cleanup(final, False)
             overallCount += count
-            if newFile_bool == True:
+            if newFile_bool == True:  ##line 256-273 will combine all the include files and the content and then use dict_covert to put them in the dictonary. IF the bool is true
+                                    ## then it means that there was no content found in the original file and it had to go in the include file. this will force it to create two dictonary
+                                    ##entries of the original file and its content and then contents of the file that the rest of the content was found in
                 fileName = inc_file
                 newFile_bool = False
                 final.append(p_name)
@@ -263,12 +267,12 @@ if __name__ == '__main__':
                 add_dict = dict_convert(include)
                 if add_dict not in overall:
                     overall.append(add_dict)
-            else:
+            else:                                             ##if the bool is false then it will go here because it will have found all the content already and will be ready to add to a dict
                 final = final + include
                 fileName = fileName_in
                 dict_holder = dict_convert(final)
                 if dict_holder not in overall:
                     overall.append(dict_holder)
     with open("overall.json", "w") as fp:
-        json.dump(overall, fp, indent=6)
-    print("DONE; TIME TAKEN:", time.time()-start, "SECS TO RUN;", overallCount, "NUM OF FILES ACESSED")
+        json.dump(overall, fp, indent=6)       ##creates a json file 
+    print("DONE; TIME TAKEN:", time.time()-start, "SECS TO RUN;", overallCount, "NUM OF FILES ACESSED")  ##tells the user the number of jumps the program did and the amount of files it accessed overall
