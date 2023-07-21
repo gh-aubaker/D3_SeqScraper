@@ -2,7 +2,7 @@ import re
 from pathlib import Path
 import time
 import json
-
+import samplePaths
 global unit_boo 
 unit_boo = False
 global common_boo
@@ -32,7 +32,7 @@ overall = []
 
 def get_p_name(line):
     global p_name
-    p_pat = r'\s+(PROGRAM NAME:\s.*)'
+    p_pat = samplePaths.grab_regex()[0]
     p_match = re.findall(p_pat, line, re.IGNORECASE)
     if p_match != []:
         p_name = p_match[0]
@@ -44,20 +44,20 @@ def getFile(str):
     newFile_bool = True
     count += 1
     if(".h" in str.lower()):
-        fileCopy = "_inputfiles\\\\h_files\\\\" + str[:-2:] + "_h.TXT"
+        fileCopy = samplePaths.grab_new_path(str)[0]
     if(".inc" in str.lower()):
-        fileCopy = "_inputfiles\\\\incFile\\\\" + str[:-4:] + "_inc.TXT"
+        fileCopy = samplePaths.grab_new_path(str)[1]
     file_l.append(fileCopy)
     return fileCopy
 
 def checkContent(line):
     global unit_boo
     holder = []
-    u_pat = r'^\s+(UNIT\s.*)'
+    u_pat = samplePaths.grab_regex()[1]
     u_match = re.findall(u_pat, line, re.IGNORECASE)
-    c_pat = r'^\s+(COMMON\s.*)'
+    c_pat = samplePaths.grab_regex()[2]
     c_match = re.findall(c_pat, line, re.IGNORECASE)
-    r_pat = r'^\s+(RUNIT\s.*)'
+    r_pat = samplePaths.grab_regex()[3]
     r_match = re.findall(r_pat, line, re.IGNORECASE)
     
     for i in u_match:
@@ -91,7 +91,7 @@ def getContent(line):
     return l
 def include_check(line):
     if ("#include" in line and unit_boo == False):
-        inc_pat = r'<([^>]*)>'
+        inc_pat = samplePaths.grab_regex()[4]
         inc_match = re.findall(inc_pat, line, re.IGNORECASE)
         new_file = getFile(inc_match[0])
         return new_file
@@ -121,7 +121,7 @@ def test(file):
             num += 1
         if "*/" in line:
             num += 1
-            slash_mat = re.findall(r'\*\/(.*)', line)
+            slash_mat = re.findall(samplePaths.grab_regex()[5], line)
             if slash_mat != []:
                 check = slash_mat
             
@@ -169,7 +169,7 @@ def cleanup(list, bool):
 def inlclude_add(line):
     global include
     if "#include" in line:
-        inc_pat = r'#(.+?)>'   
+        inc_pat = samplePaths.grab_regex()[6]   
         inc_mat = re.findall(inc_pat, line, re.IGNORECASE)
         if inc_mat != []:
             include.append(inc_mat[0])
@@ -202,7 +202,7 @@ def dict_convert(list):
                   'H:' : [],
                 'newFile_bool:': False}
     
-    dict[name]["newFile_bool"] = newFile_bool
+    dict[name]["newFile_bool:"] = newFile_bool
     if list == []:
         return dict
     for i in list:
@@ -224,7 +224,7 @@ def dict_convert(list):
 if __name__ == '__main__':
     start = time.time()
     print("start timer")
-    dict_list = ["_inputfiles/D3SeqFiles", "_inputfiles\h_files", "_inputfiles\incFile"]
+    dict_list = [samplePaths.grab_dict_path()[0], samplePaths.grab_dict_path()[1], samplePaths.grab_dict_path()[2]]
     overallCount = 0
     for directory in dict_list:
         files = Path(directory).glob('*')
@@ -258,7 +258,7 @@ if __name__ == '__main__':
                 add_dict = dict_convert(final)
                 if add_dict not in overall:
                     overall.append(add_dict)
-                newFile_bool = True
+                    newFile_bool = True
                 fileName = fileName_in
                 add_dict = dict_convert(include)
                 if add_dict not in overall:
