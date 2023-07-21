@@ -1,0 +1,65 @@
+[
+    {"file1" : {
+        "program name" : ["adhgajsfjhsdha"],
+        "Unit": ["asjhdkajsfbh"],
+       "Runit": ["asljdajhsfd"],
+       "common": ["fkadjfklahdjshf"],
+        "file" : ["jhasfkjhd.txt", "jhasfkjhd.txt2", "jhasfkjhd.txt", "jhasfkjhd.txt2", "jhasfkjhd.txt", "jhasfkjhd.txt2"],
+        "fileBool" : false
+    }
+    },
+    {"file2" : {
+        "program name" : ["adhgajsfjhsdha"],
+        "Unit": [],
+       "Runit": [],
+       "common": [],
+        "file" : ["go_in_here.txt","jhasfkjhd.txt", "jhasfkjhd.txt2", "jhasfkjhd.txt", "jhasfkjhd.txt2", "jhasfkjhd.txt", "jhasfkjhd.txt2"],
+        "fileBool" : true
+    }
+    },
+    {"go_in_here" : {
+        "program name" : ["adhgajsfjhsdha"],
+        "Unit": ["asjhdkajsfbh"],
+       "Runit": ["asljdajhsfd"],
+       "common": ["fkadjfklahdjshf"],
+        "file" : [],
+        "fileBool" : false
+    }
+    },
+    {"file3" : {
+        "program name" : ["adhgajsfjhsdha"],
+        "Unit": ["asjdkajhsd"],
+       "Runit": [],
+       "common": [],
+        "file" : [],
+        "fileBool" : true
+    }
+    },
+    {"file4" : {
+        "program name" : ["adhgajsfjhsdha"],
+        "Unit": [],
+       "Runit": [],
+       "common": [],
+        "file" : ["some_file.txt"],
+        "fileBool" : true
+    }
+    },
+    {"some_file" : {
+        "program name" : ["adhgajsfjhsdha"],
+        "Unit": [],
+       "Runit": [],
+       "common": [],
+        "file" : ["go_in_here.txt"],
+        "fileBool" : true
+    }
+    },
+    {"go_in_here" : {
+        "program name" : ["adhgajsfjhsdha"],
+        "Unit": ["asjhdkajsfbh"],
+       "Runit": ["asljdajhsfd"],
+       "common": ["fkadjfklahdjshf"],
+        "file" : [],
+        "fileBool" : false
+    }
+    }
+]
