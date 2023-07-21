@@ -162,3 +162,4 @@ cython_debug/
 _outputfiles
 _inputfiles
 _shared_scripts/paths.py
+some_input_files
